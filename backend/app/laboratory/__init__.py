@@ -4,6 +4,7 @@ from app.laboratory.backtesting_engine import BacktestingEngine
 from app.laboratory.adaptive_learning_engine import AdaptiveLearningEngine
 from app.laboratory.confidence_engine import ConfidenceEngine
 from app.laboratory.correlation_engine import CorrelationEngine
+from app.laboratory.consensus_engine import ConsensusEngine
 from app.laboratory.laboratory_engine import LaboratoryEngine
 from app.laboratory.pattern_detector import PatternDetector
 from app.laboratory.pattern_discovery import PatternDiscovery
@@ -23,6 +24,7 @@ __all__ = [
     "BacktestingEngine",
     "ConfidenceEngine",
     "CorrelationEngine",
+    "ConsensusEngine",
     "EventLogger",
     "EventStore",
     "LaboratoryEngine",
