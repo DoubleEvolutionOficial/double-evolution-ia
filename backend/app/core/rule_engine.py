@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import Iterable
 
 from app.core.base_rule import BaseRule, RuleEvaluationResult
+from app.rules.registry import get_registered_rules
 
 
 class RuleEngine:
     """Engine responsible for orchestrating active rule evaluations."""
 
-    def __init__(self, rules: Iterable[BaseRule]) -> None:
-        self._rules = list(rules)
+    def __init__(self, rules: Iterable[BaseRule] | None = None) -> None:
+        self._rules = list(rules) if rules is not None else get_registered_rules()
 
     @property
     def active_rules(self) -> list[BaseRule]:
