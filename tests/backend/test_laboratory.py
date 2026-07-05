@@ -5,7 +5,7 @@ import pytest
 
 sys.path.append(str(Path.cwd() / "backend"))
 
-from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, ReplayEngine, SequenceAnalyzer, Statistics
+from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics
 
 
 def test_event_logger_records_complete_event_model():
@@ -157,3 +157,29 @@ def test_replay_engine_replays_events_without_mutating_source():
 
     assert len(engine.get_events()) == 4
     assert engine.get_events()[0].classification == "DEVEDOR"
+
+
+def test_regime_detector_detects_expected_regimes_without_mutating_events():
+    engine = LaboratoryEngine()
+    detector = RegimeDetector(engine)
+
+    events = [
+        AnalysisEvent("2026-07-05T10:00:00Z", 10, 0, "left", 2.0, "DEVEDOR", 80.0, 2.0, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:05:00Z", 10, 5, "left", 2.1, "DEVEDOR", 82.0, 2.2, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:10:00Z", 10, 10, "right", 2.2, "DEVEDOR", 85.0, 2.4, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:15:00Z", 10, 15, "right", 2.3, "DEVEDOR", 83.0, 2.1, ["REG-003"], "Aprovar"),
+    ]
+
+    for event in events:
+        engine.record_analysis_event(event)
+
+    regimes = detector.detect_regimes()
+
+    assert [regime["name"] for regime in regimes] == [
+        "Regime de Devedores",
+        "Regime de Minutagem Forte",
+    ]
+    assert regimes[0]["score"] >= regimes[1]["score"]
+    assert regimes[0]["confidence"] > 0.0
+    assert all("motivos" in regime for regime in regimes)
+    assert len(engine.get_events()) == 4
