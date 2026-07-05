@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from app.laboratory.confidence_engine import ConfidenceEngine
 from app.laboratory.laboratory_engine import LaboratoryEngine
 from app.laboratory.pattern_discovery import PatternDiscovery
 from app.laboratory.pattern_score import PatternScore
@@ -22,6 +23,7 @@ class PredictionEngine:
         pattern_score: PatternScore | None = None,
         regime_detector: RegimeDetector | None = None,
         sequence_analyzer: SequenceAnalyzer | None = None,
+        confidence_engine: ConfidenceEngine | None = None,
     ) -> None:
         self.laboratory_engine = laboratory_engine or LaboratoryEngine()
         self.statistics_engine = statistics_engine or StatisticsEngine(self.laboratory_engine)
@@ -29,6 +31,13 @@ class PredictionEngine:
         self.pattern_score = pattern_score or PatternScore(self.laboratory_engine, self.pattern_discovery)
         self.regime_detector = regime_detector or RegimeDetector(self.laboratory_engine)
         self.sequence_analyzer = sequence_analyzer or SequenceAnalyzer(self.laboratory_engine)
+        self.confidence_engine = confidence_engine or ConfidenceEngine(
+            self.laboratory_engine,
+            pattern_score=self.pattern_score,
+            regime_detector=self.regime_detector,
+            statistics_engine=self.statistics_engine,
+            sequence_analyzer=self.sequence_analyzer,
+        )
 
     def predict_next_event(self) -> dict[str, Any]:
         events = self.laboratory_engine.get_events()
@@ -38,8 +47,12 @@ class PredictionEngine:
                 "next_classification": "NEUTRO",
                 "probability": 0.0,
                 "confidence": 0.0,
+                "reliability": "baixa",
+                "risk_level": "alto",
                 "justification": ["Nenhum evento disponível para previsão"],
+                "explanation": ["Sem histórico suficiente para avaliar a previsão"],
                 "patterns_used": [],
+                "factors": {},
                 "final_score": 0.0,
                 "sources": [],
                 "reasoning": ["Nenhum evento disponível para previsão"],
@@ -111,13 +124,26 @@ class PredictionEngine:
             f"Distribuição observada: {dict(class_counts)}",
         ]
 
+        confidence_data = self.confidence_engine.assess_prediction(
+            {
+                "predicted_event": prediction,
+                "probability": round(probability, 4),
+                "patterns_used": patterns_used,
+                "final_score": final_score,
+            }
+        )
+
         return {
             "predicted_event": prediction,
             "next_classification": prediction,
             "probability": round(probability, 4),
-            "confidence": round(confidence, 4),
+            "confidence": confidence_data["confidence"],
+            "reliability": confidence_data["reliability"],
+            "risk_level": confidence_data["risk_level"],
             "justification": reasoning,
+            "explanation": confidence_data["explanation"],
             "patterns_used": patterns_used,
+            "factors": confidence_data["factors"],
             "final_score": final_score,
             "sources": sources,
             "reasoning": reasoning,

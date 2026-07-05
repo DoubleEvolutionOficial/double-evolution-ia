@@ -1,6 +1,7 @@
 from app.laboratory.event_logger import AnalysisEvent, EventLogger
 from app.laboratory.event_store import EventStore
 from app.laboratory.backtesting_engine import BacktestingEngine
+from app.laboratory.confidence_engine import ConfidenceEngine
 from app.laboratory.laboratory_engine import LaboratoryEngine
 from app.laboratory.pattern_detector import PatternDetector
 from app.laboratory.pattern_discovery import PatternDiscovery
@@ -15,6 +16,7 @@ from app.laboratory.statistics_engine import StatisticsEngine
 __all__ = [
     "AnalysisEvent",
     "BacktestingEngine",
+    "ConfidenceEngine",
     "EventLogger",
     "EventStore",
     "LaboratoryEngine",

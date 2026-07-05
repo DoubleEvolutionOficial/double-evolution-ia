@@ -26,6 +26,6 @@ def test_backtesting_engine_replays_predictions_against_history():
     assert report["total_predictions"] == 3
     assert 0.0 <= report["accuracy"] <= 1.0
     assert 0.0 <= report["average_probability"] <= 1.0
-    assert 0.0 <= report["average_confidence"] <= 1.0
+    assert 0.0 <= report["average_confidence"] <= 100.0
     assert len(report["results"]) == 3
     assert {"predicted_event", "actual_event", "hit", "probability", "confidence", "final_score", "timestamp"}.issubset(report["results"][0].keys())

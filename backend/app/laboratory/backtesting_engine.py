@@ -4,7 +4,6 @@ from typing import Any
 
 from app.laboratory.event_store import EventStore
 from app.laboratory.laboratory_engine import LaboratoryEngine
-from app.laboratory.prediction_engine import PredictionEngine
 
 
 class BacktestingEngine:
@@ -13,7 +12,7 @@ class BacktestingEngine:
     def __init__(
         self,
         laboratory_engine: LaboratoryEngine | None = None,
-        prediction_engine: PredictionEngine | None = None,
+        prediction_engine: Any | None = None,
     ) -> None:
         self.laboratory_engine = laboratory_engine or LaboratoryEngine()
         self.prediction_engine = prediction_engine
@@ -37,7 +36,12 @@ class BacktestingEngine:
             for historical_event in events[:index]:
                 history_engine.record_analysis_event(historical_event)
 
-            prediction_engine = self.prediction_engine or PredictionEngine(history_engine)
+            if self.prediction_engine is None:
+                from app.laboratory.prediction_engine import PredictionEngine
+
+                prediction_engine = PredictionEngine(history_engine)
+            else:
+                prediction_engine = self.prediction_engine
             forecast = prediction_engine.predict_next_event()
             actual_event = events[index]
             predicted_event = str(forecast.get("predicted_event", "NEUTRO"))

@@ -292,7 +292,7 @@ def test_prediction_engine_generates_probabilistic_forecasts():
     assert forecast["predicted_event"] in {"DEVEDOR", "PAGADOR"}
     assert forecast["next_classification"] in {"DEVEDOR", "PAGADOR"}
     assert 0.0 <= forecast["probability"] <= 1.0
-    assert forecast["confidence"] > 0.0
+    assert 0.0 <= forecast["confidence"] <= 100.0
     assert forecast["justification"]
     assert forecast["patterns_used"]
     assert 0.0 <= forecast["final_score"] <= 100.0
@@ -313,6 +313,8 @@ def test_prediction_engine_handles_empty_history():
     assert forecast["predicted_event"] == "NEUTRO"
     assert forecast["probability"] == 0.0
     assert forecast["confidence"] == 0.0
+    assert forecast["reliability"] == "baixa"
+    assert forecast["risk_level"] == "alto"
     assert forecast["patterns_used"] == []
     assert forecast["final_score"] == 0.0
 
