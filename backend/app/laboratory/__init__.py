@@ -1,6 +1,7 @@
 from app.laboratory.event_logger import AnalysisEvent, EventLogger
 from app.laboratory.laboratory_engine import LaboratoryEngine
 from app.laboratory.pattern_detector import PatternDetector
+from app.laboratory.pattern_discovery import PatternDiscovery
 from app.laboratory.regime_detector import RegimeDetector
 from app.laboratory.replay_engine import ReplayEngine
 from app.laboratory.sequence_analyzer import SequenceAnalyzer
@@ -12,6 +13,7 @@ __all__ = [
     "EventLogger",
     "LaboratoryEngine",
     "PatternDetector",
+    "PatternDiscovery",
     "RegimeDetector",
     "ReplayEngine",
     "SequenceAnalyzer",

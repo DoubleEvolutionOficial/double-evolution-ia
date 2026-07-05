@@ -5,7 +5,7 @@ import pytest
 
 sys.path.append(str(Path.cwd() / "backend"))
 
-from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics, StatisticsEngine
+from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, PatternDiscovery, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics, StatisticsEngine
 
 
 def test_event_logger_records_complete_event_model():
@@ -215,3 +215,34 @@ def test_statistics_engine_calculates_expected_metrics():
     assert all(stat["quantity_analyzed"] == 5 for stat in summary.values())
     assert all(stat["confidence"] > 0.0 for stat in summary.values())
     assert all(stat["period"] for stat in summary.values())
+
+
+def test_pattern_discovery_identifies_recurring_patterns():
+    engine = LaboratoryEngine()
+    discovery = PatternDiscovery(engine)
+
+    events = [
+        AnalysisEvent("2026-07-05T10:00:00Z", 10, 0, "left", 10.0, "DEVEDOR", 80.0, 2.0, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:01:00Z", 10, 1, "left", 9.0, "DEVEDOR", 82.0, 2.2, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:02:00Z", 10, 2, "right", 7.0, "PAGADOR", 85.0, 2.4, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:03:00Z", 10, 3, "right", 8.0, "PAGADOR", 83.0, 2.1, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:04:00Z", 10, 4, "left", 6.0, "DEVEDOR", 79.0, 2.0, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:05:00Z", 10, 5, "left", 2.0, "CHUVA", 78.0, 2.0, ["REG-004"], "Revisar"),
+    ]
+
+    for event in events:
+        engine.record_analysis_event(event)
+
+    patterns = discovery.discover_patterns()
+    names = [pattern["name"] for pattern in patterns]
+
+    assert any("Devedores" in name for name in names)
+    assert any("Pagadores" in name for name in names)
+    assert any("chuva" in name.lower() for name in names)
+    assert any("Alternância" in name for name in names)
+    assert any("Minuto" in name for name in names)
+    assert any("Horário" in name for name in names)
+    assert any("Consecutivos" in name for name in names)
+    assert all(pattern["occurrences"] >= 1 for pattern in patterns)
+    assert all(pattern["confidence"] > 0.0 for pattern in patterns)
+    assert len(engine.get_events()) == 6
