@@ -5,7 +5,7 @@ import pytest
 
 sys.path.append(str(Path.cwd() / "backend"))
 
-from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, PatternDiscovery, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics, StatisticsEngine
+from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, PatternDiscovery, PatternScore, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics, StatisticsEngine
 
 
 def test_event_logger_records_complete_event_model():
@@ -246,3 +246,28 @@ def test_pattern_discovery_identifies_recurring_patterns():
     assert all(pattern["occurrences"] >= 1 for pattern in patterns)
     assert all(pattern["confidence"] > 0.0 for pattern in patterns)
     assert len(engine.get_events()) == 6
+
+
+def test_pattern_score_returns_scored_recommendations_for_patterns():
+    engine = LaboratoryEngine()
+    discovery = PatternDiscovery(engine)
+    scorer = PatternScore(engine, discovery)
+
+    events = [
+        AnalysisEvent("2026-07-05T10:00:00Z", 10, 0, "left", 10.0, "DEVEDOR", 80.0, 2.0, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:01:00Z", 10, 1, "left", 9.0, "DEVEDOR", 82.0, 2.2, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:02:00Z", 10, 2, "right", 7.0, "PAGADOR", 85.0, 2.4, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:03:00Z", 10, 3, "right", 8.0, "PAGADOR", 83.0, 2.1, ["REG-003"], "Aprovar"),
+    ]
+
+    for event in events:
+        engine.record_analysis_event(event)
+
+    scored_patterns = scorer.score_patterns()
+
+    assert scored_patterns
+    assert all(0 <= item["score"] <= 100 for item in scored_patterns)
+    assert all(item["confidence"] > 0.0 for item in scored_patterns)
+    assert all("strength" in item for item in scored_patterns)
+    assert all("recommendation" in item for item in scored_patterns)
+    assert all("risk" in item for item in scored_patterns)
