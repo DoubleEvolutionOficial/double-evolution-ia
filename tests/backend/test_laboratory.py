@@ -5,7 +5,7 @@ import pytest
 
 sys.path.append(str(Path.cwd() / "backend"))
 
-from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics
+from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics, StatisticsEngine
 
 
 def test_event_logger_records_complete_event_model():
@@ -183,3 +183,35 @@ def test_regime_detector_detects_expected_regimes_without_mutating_events():
     assert regimes[0]["confidence"] > 0.0
     assert all("motivos" in regime for regime in regimes)
     assert len(engine.get_events()) == 4
+
+
+def test_statistics_engine_calculates_expected_metrics():
+    engine = LaboratoryEngine()
+    statistics_engine = StatisticsEngine(engine)
+
+    events = [
+        AnalysisEvent("2026-07-05T10:00:00Z", 10, 0, "left", 10.0, "PEDRA CHAVE", 80.0, 2.0, ["REG-001"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:01:00Z", 10, 1, "left", 9.0, "DEVEDOR", 82.0, 2.2, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:02:00Z", 10, 2, "right", 7.0, "PAGADOR", 85.0, 2.4, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:03:00Z", 10, 3, "right", 8.0, "CHUVA", 83.0, 2.1, ["REG-004"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:04:00Z", 10, 4, "left", 6.0, "DEVEDOR", 79.0, 2.0, ["REG-002"], "Revisar"),
+    ]
+
+    for event in events:
+        engine.record_analysis_event(event)
+
+    summary = statistics_engine.build_summary()
+
+    assert summary["freq_pedra_chave"]["value"] == 1
+    assert summary["freq_devedores"]["value"] == 2
+    assert summary["freq_pagadores"]["value"] == 1
+    assert summary["freq_chuva"]["value"] == 1
+    assert summary["distancia_media"]["value"] == pytest.approx(1.5)
+    assert summary["tempo_medio"]["value"] == pytest.approx(60.0)
+    assert summary["maior_sequencia"]["value"] == 2
+    assert summary["distribuicao_por_hora"]["value"][10] == 5
+    assert summary["distribuicao_por_lado"]["value"]["left"] == 3
+    assert summary["distribuicao_por_minuto_final"]["value"][0] == 1
+    assert all(stat["quantity_analyzed"] == 5 for stat in summary.values())
+    assert all(stat["confidence"] > 0.0 for stat in summary.values())
+    assert all(stat["period"] for stat in summary.values())

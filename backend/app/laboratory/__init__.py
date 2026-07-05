@@ -5,6 +5,7 @@ from app.laboratory.regime_detector import RegimeDetector
 from app.laboratory.replay_engine import ReplayEngine
 from app.laboratory.sequence_analyzer import SequenceAnalyzer
 from app.laboratory.statistics import Statistics
+from app.laboratory.statistics_engine import StatisticsEngine
 
 __all__ = [
     "AnalysisEvent",
@@ -15,4 +16,5 @@ __all__ = [
     "ReplayEngine",
     "SequenceAnalyzer",
     "Statistics",
+    "StatisticsEngine",
 ]
