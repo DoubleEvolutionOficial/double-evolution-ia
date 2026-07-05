@@ -296,8 +296,25 @@ def test_prediction_engine_generates_probabilistic_forecasts():
     assert forecast["justification"]
     assert forecast["patterns_used"]
     assert 0.0 <= forecast["final_score"] <= 100.0
-    assert forecast["sources"]
+    assert forecast["sources"] == [
+        "EventStore",
+        "SequenceAnalyzer",
+        "StatisticsEngine",
+        "PatternDiscovery",
+        "PatternScore",
+        "RegimeDetector",
+    ]
     assert forecast["reasoning"]
+
+
+def test_prediction_engine_handles_empty_history():
+    forecast = PredictionEngine(LaboratoryEngine()).predict_next_event()
+
+    assert forecast["predicted_event"] == "NEUTRO"
+    assert forecast["probability"] == 0.0
+    assert forecast["confidence"] == 0.0
+    assert forecast["patterns_used"] == []
+    assert forecast["final_score"] == 0.0
 
 
 def test_event_store_supports_large_in_memory_event_volume():
