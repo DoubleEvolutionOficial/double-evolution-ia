@@ -10,7 +10,11 @@ class RuleEngine:
     """Engine responsible for orchestrating active rule evaluations."""
 
     def __init__(self, rules: Iterable[BaseRule] | None = None) -> None:
-        self._rules = list(rules) if rules is not None else get_registered_rules()
+        if rules is None:
+            import app.rules  # Register all rule implementations when engine starts.
+            self._rules = get_registered_rules()
+        else:
+            self._rules = list(rules)
 
     @property
     def active_rules(self) -> list[BaseRule]:
