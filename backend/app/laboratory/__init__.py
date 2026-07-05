@@ -1,8 +1,10 @@
 from app.laboratory.event_logger import AnalysisEvent, EventLogger
+from app.laboratory.event_store import EventStore
 from app.laboratory.laboratory_engine import LaboratoryEngine
 from app.laboratory.pattern_detector import PatternDetector
 from app.laboratory.pattern_discovery import PatternDiscovery
 from app.laboratory.pattern_score import PatternScore
+from app.laboratory.prediction_engine import PredictionEngine
 from app.laboratory.regime_detector import RegimeDetector
 from app.laboratory.replay_engine import ReplayEngine
 from app.laboratory.sequence_analyzer import SequenceAnalyzer
@@ -12,10 +14,12 @@ from app.laboratory.statistics_engine import StatisticsEngine
 __all__ = [
     "AnalysisEvent",
     "EventLogger",
+    "EventStore",
     "LaboratoryEngine",
     "PatternDetector",
     "PatternDiscovery",
     "PatternScore",
+    "PredictionEngine",
     "RegimeDetector",
     "ReplayEngine",
     "SequenceAnalyzer",

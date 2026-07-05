@@ -16,6 +16,14 @@ class AnalysisEvent:
     score: float
     triggered_rules: list[str] = field(default_factory=list)
     recommendation: str | None = None
+    date: str | None = None
+    second: int | None = None
+    previous_stone: str | None = None
+    next_stone: str | None = None
+    distance_from_last_white: float | None = None
+    current_sequence: list[str] | None = None
+    regime_detected: str | None = None
+    rules_triggered: list[str] | None = None
 
 
 class EventLogger:

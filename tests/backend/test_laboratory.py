@@ -5,7 +5,7 @@ import pytest
 
 sys.path.append(str(Path.cwd() / "backend"))
 
-from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, PatternDiscovery, PatternScore, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics, StatisticsEngine
+from app.laboratory import AnalysisEvent, EventLogger, EventStore, LaboratoryEngine, PatternDetector, PatternDiscovery, PatternScore, PredictionEngine, RegimeDetector, ReplayEngine, SequenceAnalyzer, Statistics, StatisticsEngine
 
 
 def test_event_logger_records_complete_event_model():
@@ -271,3 +271,61 @@ def test_pattern_score_returns_scored_recommendations_for_patterns():
     assert all("strength" in item for item in scored_patterns)
     assert all("recommendation" in item for item in scored_patterns)
     assert all("risk" in item for item in scored_patterns)
+
+
+def test_prediction_engine_generates_probabilistic_forecasts():
+    engine = LaboratoryEngine()
+    prediction_engine = PredictionEngine(engine)
+
+    events = [
+        AnalysisEvent("2026-07-05T10:00:00Z", 10, 0, "left", 10.0, "DEVEDOR", 80.0, 2.0, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:01:00Z", 10, 1, "left", 9.0, "DEVEDOR", 82.0, 2.2, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:02:00Z", 10, 2, "right", 7.0, "PAGADOR", 85.0, 2.4, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:03:00Z", 10, 3, "right", 8.0, "PAGADOR", 83.0, 2.1, ["REG-003"], "Aprovar"),
+    ]
+
+    for event in events:
+        engine.record_analysis_event(event)
+
+    forecast = prediction_engine.predict_next_event()
+
+    assert forecast["predicted_event"] in {"DEVEDOR", "PAGADOR"}
+    assert forecast["next_classification"] in {"DEVEDOR", "PAGADOR"}
+    assert 0.0 <= forecast["probability"] <= 1.0
+    assert forecast["confidence"] > 0.0
+    assert forecast["justification"]
+    assert forecast["patterns_used"]
+    assert 0.0 <= forecast["final_score"] <= 100.0
+    assert forecast["sources"]
+    assert forecast["reasoning"]
+
+
+def test_event_store_supports_large_in_memory_event_volume():
+    store = EventStore()
+
+    for index in range(1500):
+        event = AnalysisEvent(
+            timestamp=f"2026-07-05T10:{index % 60:02d}:00Z",
+            hour=10,
+            minute=index % 60,
+            side="left" if index % 2 == 0 else "right",
+            distance=float(index % 25),
+            classification="DEVEDOR" if index % 3 == 0 else "PAGADOR",
+            confidence=70.0 + index % 10,
+            score=float(index % 5),
+            triggered_rules=["REG-001"],
+            recommendation="observacao",
+            date="2026-07-05",
+            second=index % 60,
+            previous_stone="A",
+            next_stone="B",
+            distance_from_last_white=float(index % 7),
+            current_sequence=["DEVEDOR", "PAGADOR"],
+            regime_detected="Regime Neutro",
+            rules_triggered=["REG-001"],
+        )
+        store.add_event(event)
+
+    assert store.count() == 1500
+    assert store.get_slice(0, 3)[0].classification == "DEVEDOR"
+    assert store.get_events()[1499].second == 59
