@@ -5,36 +5,101 @@ import pytest
 
 sys.path.append(str(Path.cwd() / "backend"))
 
-from app.laboratory import EventLogger, LaboratoryEngine, PatternDetector, Statistics
+from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, SequenceAnalyzer, Statistics
 
 
-def test_event_logger_records_events_in_order():
+def test_event_logger_records_complete_event_model():
     logger = EventLogger()
 
-    first = logger.log_event("analysis-1", {"status": "AGUARDAR", "confidence": 60.0})
-    second = logger.log_event("analysis-2", {"status": "FAVORÁVEL", "confidence": 90.0})
+    event = AnalysisEvent(
+        timestamp="2026-07-05T10:00:00Z",
+        hour=10,
+        minute=0,
+        side="left",
+        distance=12.5,
+        classification="AGUARDAR",
+        confidence=60.0,
+        score=3.0,
+        triggered_rules=["REG-001"],
+        recommendation="Revisar manualmente",
+    )
 
-    assert first["analysis_id"] == "analysis-1"
-    assert second["analysis_id"] == "analysis-2"
-    assert len(logger.events) == 2
-    assert logger.events[0]["context"]["status"] == "AGUARDAR"
+    stored_event = logger.log_event(event)
+
+    assert stored_event.timestamp == "2026-07-05T10:00:00Z"
+    assert stored_event.hour == 10
+    assert stored_event.minute == 0
+    assert stored_event.side == "left"
+    assert stored_event.distance == 12.5
+    assert stored_event.classification == "AGUARDAR"
+    assert stored_event.confidence == 60.0
+    assert stored_event.score == 3.0
+    assert stored_event.triggered_rules == ["REG-001"]
+    assert stored_event.recommendation == "Revisar manualmente"
+    assert len(logger.events) == 1
 
 
-def test_laboratory_engine_records_analysis_events_without_touching_rule_engine():
+def test_laboratory_engine_stores_events_in_memory():
     engine = LaboratoryEngine()
 
-    event = engine.record_analysis_event("analysis-10", {"status": "DESFAVORÁVEL", "confidence": 20.0})
+    event = AnalysisEvent(
+        timestamp="2026-07-05T11:30:00Z",
+        hour=11,
+        minute=30,
+        side="right",
+        distance=8.0,
+        classification="FAVORÁVEL",
+        confidence=90.0,
+        score=4.5,
+        triggered_rules=["REG-002"],
+        recommendation="Seguir fluxo",
+    )
 
-    assert event["analysis_id"] == "analysis-10"
-    assert event["context"]["status"] == "DESFAVORÁVEL"
-    assert len(engine.event_logger.events) == 1
+    stored_event = engine.record_analysis_event(event)
+
+    assert stored_event.classification == "FAVORÁVEL"
+    assert len(engine.get_events()) == 1
+    assert engine.get_events()[0].confidence == 90.0
 
 
 def test_statistics_build_summary_and_pattern_detector_is_placeholder():
     events = [
-        {"analysis_id": "a1", "context": {"status": "AGUARDAR", "confidence": 60.0}},
-        {"analysis_id": "a2", "context": {"status": "AGUARDAR", "confidence": 65.0}},
-        {"analysis_id": "a3", "context": {"status": "FAVORÁVEL", "confidence": 90.0}},
+        AnalysisEvent(
+            timestamp="2026-07-05T10:00:00Z",
+            hour=10,
+            minute=0,
+            side="left",
+            distance=10.0,
+            classification="AGUARDAR",
+            confidence=60.0,
+            score=2.0,
+            triggered_rules=["REG-001"],
+            recommendation="Revisar",
+        ),
+        AnalysisEvent(
+            timestamp="2026-07-05T10:05:00Z",
+            hour=10,
+            minute=5,
+            side="right",
+            distance=12.0,
+            classification="AGUARDAR",
+            confidence=65.0,
+            score=3.0,
+            triggered_rules=["REG-002"],
+            recommendation="Revisar",
+        ),
+        AnalysisEvent(
+            timestamp="2026-07-05T10:10:00Z",
+            hour=10,
+            minute=10,
+            side="left",
+            distance=8.0,
+            classification="FAVORÁVEL",
+            confidence=90.0,
+            score=4.0,
+            triggered_rules=["REG-003"],
+            recommendation="Aprovar",
+        ),
     ]
 
     summary = Statistics.build_summary(events)
@@ -43,3 +108,26 @@ def test_statistics_build_summary_and_pattern_detector_is_placeholder():
     assert summary["status_counts"]["AGUARDAR"] == 2
     assert summary["average_confidence"] == pytest.approx(71.66666666666667)
     assert PatternDetector.detect_patterns(events) == []
+
+
+def test_sequence_analyzer_builds_timeline_and_sequences():
+    engine = LaboratoryEngine()
+    analyzer = SequenceAnalyzer(engine)
+
+    events = [
+        AnalysisEvent("2026-07-05T10:00:00Z", 10, 0, "left", 10.0, "DEVEDOR", 80.0, 2.0, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:01:00Z", 10, 1, "left", 9.0, "DEVEDOR", 82.0, 2.2, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:02:00Z", 10, 2, "right", 7.0, "PAGADOR", 85.0, 2.4, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:03:00Z", 10, 3, "right", 8.0, "PAGADOR", 83.0, 2.1, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:04:00Z", 10, 4, "left", 10.5, "DEVEDOR", 79.0, 2.0, ["REG-002"], "Revisar"),
+    ]
+
+    for event in events:
+        engine.record_analysis_event(event)
+
+    assert analyzer.get_last_events(3)[0].classification == "PAGADOR"
+    assert analyzer.get_current_sequence() == ["DEVEDOR", "DEVEDOR", "PAGADOR", "PAGADOR", "DEVEDOR"]
+    assert analyzer.get_longest_sequence("DEVEDOR") == 2
+    assert analyzer.get_longest_sequence("PAGADOR") == 2
+    assert analyzer.get_average_distance() == pytest.approx(1.625)
+    assert analyzer.get_average_time_gap() == pytest.approx(60.0)
