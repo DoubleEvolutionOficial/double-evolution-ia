@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from app.core.base_rule import BaseRule, RuleEvaluationResult
+from app.core.decision_engine import DecisionEngine
 from app.rules.registry import get_registered_rules
 
 
@@ -39,3 +40,15 @@ class RuleEngine:
             "confidence": confidence,
             "rules": [result.to_dict() for result in results],
         }
+
+    def decide(self, context: dict[str, object] | None = None) -> dict[str, object]:
+        evaluation = self.evaluate(context)
+        return DecisionEngine().decide(evaluation["rules"])
+
+    def user_summary(self, context: dict[str, object] | None = None) -> dict[str, object]:
+        evaluation = self.evaluate(context)
+        return DecisionEngine().user_summary(evaluation["rules"])
+
+    def admin_report(self, context: dict[str, object] | None = None) -> dict[str, object]:
+        evaluation = self.evaluate(context)
+        return DecisionEngine().admin_report(evaluation["rules"])

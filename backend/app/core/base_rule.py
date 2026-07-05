@@ -13,6 +13,9 @@ class RuleEvaluationResult:
     weight: float
     score: float
     active: bool
+    matched: bool = False
+    confidence: float = 0.0
+    reason: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -23,6 +26,9 @@ class RuleEvaluationResult:
             "weight": self.weight,
             "score": self.score,
             "active": self.active,
+            "matched": self.matched,
+            "confidence": self.confidence,
+            "reason": self.reason,
             "metadata": self.metadata,
         }
 
@@ -56,6 +62,8 @@ class BaseRule(ABC):
         raise NotImplementedError
 
     def to_result(self, score: float) -> RuleEvaluationResult:
+        matched = score > 0
+        confidence = 100.0 if matched else 0.0
         return RuleEvaluationResult(
             rule_id=self.id,
             name=self.name,
@@ -63,4 +71,7 @@ class BaseRule(ABC):
             weight=self.weight,
             score=score,
             active=self.active,
+            matched=matched,
+            confidence=confidence,
+            reason="",
         )

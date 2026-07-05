@@ -44,5 +44,7 @@ def test_devedor_rule_ignores_distances_outside_5_6_7():
     result = engine.evaluate(context)
     rule_data = next(rule for rule in result["rules"] if rule["id"] == "REG-002")
 
-    assert result["score"] == 0.0
+    # REG-002 should have no debt records for distance 4 (outside 5-6-7 range)
     assert rule_data["metadata"]["debt_records"] == []
+    # REG-002 score should be 0, but total score includes other rules like REG-003
+    assert rule_data["score"] == 0.0
