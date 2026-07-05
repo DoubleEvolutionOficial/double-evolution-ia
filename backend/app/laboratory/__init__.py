@@ -13,6 +13,7 @@ from app.laboratory.replay_engine import ReplayEngine
 from app.laboratory.sequence_analyzer import SequenceAnalyzer
 from app.laboratory.statistics import Statistics
 from app.laboratory.statistics_engine import StatisticsEngine
+from app.laboratory.trend_engine import TrendEngine
 
 __all__ = [
     "AdaptiveLearningEngine",
@@ -31,4 +32,5 @@ __all__ = [
     "SequenceAnalyzer",
     "Statistics",
     "StatisticsEngine",
+    "TrendEngine",
 ]
