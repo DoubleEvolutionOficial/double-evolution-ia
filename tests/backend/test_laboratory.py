@@ -5,7 +5,7 @@ import pytest
 
 sys.path.append(str(Path.cwd() / "backend"))
 
-from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, SequenceAnalyzer, Statistics
+from app.laboratory import AnalysisEvent, EventLogger, LaboratoryEngine, PatternDetector, ReplayEngine, SequenceAnalyzer, Statistics
 
 
 def test_event_logger_records_complete_event_model():
@@ -131,3 +131,29 @@ def test_sequence_analyzer_builds_timeline_and_sequences():
     assert analyzer.get_longest_sequence("PAGADOR") == 2
     assert analyzer.get_average_distance() == pytest.approx(1.625)
     assert analyzer.get_average_time_gap() == pytest.approx(60.0)
+
+
+def test_replay_engine_replays_events_without_mutating_source():
+    engine = LaboratoryEngine()
+    replay_engine = ReplayEngine(engine)
+
+    events = [
+        AnalysisEvent("2026-07-05T10:00:00Z", 10, 0, "left", 10.0, "DEVEDOR", 80.0, 2.0, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:01:00Z", 10, 1, "left", 9.0, "DEVEDOR", 82.0, 2.2, ["REG-002"], "Revisar"),
+        AnalysisEvent("2026-07-05T10:02:00Z", 10, 2, "right", 7.0, "PAGADOR", 85.0, 2.4, ["REG-003"], "Aprovar"),
+        AnalysisEvent("2026-07-05T10:03:00Z", 10, 3, "right", 8.0, "PAGADOR", 83.0, 2.1, ["REG-003"], "Aprovar"),
+    ]
+
+    for event in events:
+        engine.record_analysis_event(event)
+
+    replay_by_count = replay_engine.replay(count=2)
+    assert len(replay_by_count) == 2
+    assert [event.classification for event in replay_by_count] == ["DEVEDOR", "DEVEDOR"]
+
+    replay_by_interval = replay_engine.replay(start_hour=10, end_hour=10)
+    assert len(replay_by_interval) == 4
+    assert replay_engine.replay(hour=10)[0].classification == "DEVEDOR"
+
+    assert len(engine.get_events()) == 4
+    assert engine.get_events()[0].classification == "DEVEDOR"
