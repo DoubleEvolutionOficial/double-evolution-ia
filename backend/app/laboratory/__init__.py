@@ -12,6 +12,7 @@ from app.laboratory.pattern_score import PatternScore
 from app.laboratory.prediction_engine import PredictionEngine
 from app.laboratory.regime_detector import RegimeDetector
 from app.laboratory.replay_engine import ReplayEngine
+from app.laboratory.risk_engine import RiskEngine
 from app.laboratory.sequence_analyzer import SequenceAnalyzer
 from app.laboratory.statistics import Statistics
 from app.laboratory.seasonality_engine import SeasonalityEngine
@@ -34,6 +35,7 @@ __all__ = [
     "PredictionEngine",
     "RegimeDetector",
     "ReplayEngine",
+    "RiskEngine",
     "SeasonalityEngine",
     "SequenceAnalyzer",
     "Statistics",
