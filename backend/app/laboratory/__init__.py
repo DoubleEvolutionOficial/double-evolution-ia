@@ -14,6 +14,7 @@ from app.laboratory.prediction_engine import PredictionEngine
 from app.laboratory.regime_detector import RegimeDetector
 from app.laboratory.replay_engine import ReplayEngine
 from app.laboratory.risk_engine import RiskEngine
+from app.laboratory.signal_engine import SignalEngine
 from app.laboratory.sequence_analyzer import SequenceAnalyzer
 from app.laboratory.statistics import Statistics
 from app.laboratory.seasonality_engine import SeasonalityEngine
@@ -38,6 +39,7 @@ __all__ = [
     "RegimeDetector",
     "ReplayEngine",
     "RiskEngine",
+    "SignalEngine",
     "SeasonalityEngine",
     "SequenceAnalyzer",
     "Statistics",
