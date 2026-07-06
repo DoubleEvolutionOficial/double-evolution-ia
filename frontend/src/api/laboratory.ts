@@ -2,13 +2,12 @@ import {
   LaboratoryAnalyzeRequest,
   LaboratoryAnalyzeResponse,
 } from "../types/laboratory";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+import { buildApiUrl } from "./config";
 
 export async function analyzeLaboratory(
   payload: LaboratoryAnalyzeRequest
 ): Promise<LaboratoryAnalyzeResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/laboratory/analyze`, {
+  const response = await fetch(buildApiUrl("/api/v1/laboratory/analyze"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
