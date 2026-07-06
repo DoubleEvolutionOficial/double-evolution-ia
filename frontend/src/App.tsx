@@ -15,6 +15,8 @@ import { PatternRankingEngine } from "./services/pattern-ranking/patternRankingE
 import {
   PatternRankingResult,
 } from "./services/pattern-ranking/types";
+import { PerformanceAnalytics } from "./services/performance-analytics/performanceAnalytics";
+import { PerformanceAnalyticsSnapshot } from "./services/performance-analytics/types";
 import { StrategyEngine } from "./services/strategy/strategyEngine";
 import {
   StrategyCenterState,
@@ -156,6 +158,56 @@ function createEmptyStrategyResult(): StrategyResult {
   };
 }
 
+function createEmptyPerformanceAnalytics(): PerformanceAnalyticsSnapshot {
+  return {
+    updated_at: new Date(0).toISOString(),
+    overall_accuracy: 0,
+    todays_accuracy: 0,
+    last_100_predictions: 0,
+    win_rate: 0,
+    loss_rate: 0,
+    average_confidence: 0,
+    average_risk: 0,
+    prediction_accuracy: 0,
+    strategy_accuracy: 0,
+    pattern_accuracy: 0,
+    learning_evolution: 0,
+    best_strategy: "-",
+    worst_strategy: "-",
+    best_pattern: "-",
+    worst_pattern: "-",
+    win_loss_chart: {
+      wins: 0,
+      losses: 0,
+    },
+    accuracy_timeline: [],
+    learning_curve: [],
+    accuracy_by_hour: [],
+    accuracy_by_strategy: [],
+    performance_by_pattern: [],
+    last_results: [],
+  };
+}
+
+function buildSparkline(points: Array<{ value: number }>, width = 320, height = 84): string {
+  if (!points.length) {
+    return "";
+  }
+
+  if (points.length === 1) {
+    const y = height - (Math.max(0, Math.min(100, points[0].value)) / 100) * height;
+    return `0,${y.toFixed(2)} ${width},${y.toFixed(2)}`;
+  }
+
+  return points
+    .map((point, index) => {
+      const x = (index / (points.length - 1)) * width;
+      const y = height - (Math.max(0, Math.min(100, point.value)) / 100) * height;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -199,6 +251,9 @@ function App() {
     createEmptyStrategyResult
   );
   const [strategyHistory, setStrategyHistory] = useState<StrategyDecision[]>([]);
+  const [performanceAnalytics, setPerformanceAnalytics] = useState<PerformanceAnalyticsSnapshot>(
+    createEmptyPerformanceAnalytics
+  );
   const [isScanningPatterns, setIsScanningPatterns] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
@@ -216,9 +271,13 @@ function App() {
   const pendingAutoAnalyzeRef = useRef(false);
   const lastAnalysisSignatureRef = useRef<string>("");
   const strategyHistoryRef = useRef<StrategyDecision[]>([]);
+  const performanceAnalyticsRef = useRef<PerformanceAnalyticsSnapshot>(
+    createEmptyPerformanceAnalytics()
+  );
   const learningEngineRef = useRef(new LearningEngine());
   const patternDiscoveryEngineRef = useRef(new PatternDiscoveryEngine());
   const patternRankingEngineRef = useRef(new PatternRankingEngine());
+  const performanceAnalyticsEngineRef = useRef(new PerformanceAnalytics());
   const strategyEngineRef = useRef(new StrategyEngine());
 
   const refreshStorageInfo = useCallback(() => {
@@ -324,6 +383,43 @@ function App() {
     strategyHistoryRef.current = strategyHistory;
   }, [strategyHistory]);
 
+  useEffect(() => {
+    performanceAnalyticsRef.current = performanceAnalytics;
+  }, [performanceAnalytics]);
+
+  const runPerformanceAnalytics = useCallback(
+    (nextStrategy?: StrategyResult, nextStrategyHistory?: StrategyDecision[]) => {
+      const snapshot = performanceAnalyticsEngineRef.current.evaluate({
+        strategy: nextStrategy ?? strategyResult,
+        strategyHistory: nextStrategyHistory ?? strategyHistoryRef.current,
+        learning,
+        ranking: patternRanking,
+        signal: analysis?.signal ?? null,
+        liveEvents,
+        historicalResults: performanceAnalyticsRef.current.last_results,
+      });
+
+      performanceAnalyticsRef.current = snapshot;
+      setPerformanceAnalytics(snapshot);
+      storageService.savePerformanceAnalyticsSnapshot(snapshot);
+      refreshStorageInfo();
+    },
+    [analysis, learning, liveEvents, patternRanking, refreshStorageInfo, strategyResult]
+  );
+
+  useEffect(() => {
+    if (!liveEvents.length) {
+      return;
+    }
+
+    runPerformanceAnalytics(strategyResult, strategyHistory);
+  }, [
+    liveEvents.length,
+    runPerformanceAnalytics,
+    strategyHistory,
+    strategyResult,
+  ]);
+
   const clearLearningMemory = useCallback(() => {
     const confirmClear = window.confirm(
       "Tem certeza que deseja limpar a memoria persistente do LearningEngine?"
@@ -336,6 +432,7 @@ function App() {
     storageService.clearPatternDiscoveryResult();
     storageService.clearPatternRankingResult();
     storageService.clearStrategyCenterState();
+    storageService.clearPerformanceAnalyticsSnapshot();
     learningEngineRef.current = new LearningEngine();
     lastIngestedIndexRef.current = 0;
     setLearning(createEmptyLearning());
@@ -346,6 +443,8 @@ function App() {
     setManualStrategy("Balanced");
     setStrategyResult(createEmptyStrategyResult());
     setStrategyHistory([]);
+    setPerformanceAnalytics(createEmptyPerformanceAnalytics());
+    performanceAnalyticsRef.current = createEmptyPerformanceAnalytics();
     setScanProgress(0);
     setScanMessage(null);
     refreshStorageInfo();
@@ -477,6 +576,12 @@ function App() {
       setStrategyHistory(storedStrategy.history);
     }
 
+    const storedPerformance = storageService.loadPerformanceAnalyticsSnapshot();
+    if (storedPerformance) {
+      setPerformanceAnalytics(storedPerformance);
+      performanceAnalyticsRef.current = storedPerformance;
+    }
+
     refreshStorageInfo();
 
     const unsubscribe = liveDataService.subscribe((events) => {
@@ -492,6 +597,8 @@ function App() {
           saveLearningNow();
           if (patternRanking.ranked_patterns.length || patternDiscovery.patterns.length) {
             runStrategySelection(strategyMode, manualStrategy);
+          } else {
+            runPerformanceAnalytics();
           }
         }
         lastIngestedIndexRef.current = events.length;
@@ -514,7 +621,17 @@ function App() {
       unsubscribe();
       liveDataService.disconnect();
     };
-  }, [refreshStorageInfo, saveLearningNow, scheduleAutoAnalyze]);
+  }, [
+    manualStrategy,
+    patternDiscovery.patterns.length,
+    patternRanking.ranked_patterns.length,
+    refreshStorageInfo,
+    runPerformanceAnalytics,
+    runStrategySelection,
+    saveLearningNow,
+    scheduleAutoAnalyze,
+    strategyMode,
+  ]);
 
   function handleConnectLiveData() {
     liveDataService.connect();
@@ -697,6 +814,25 @@ function App() {
 
     return latest?.last_seen ? formatClock(new Date(latest.last_seen)) : "-";
   }, [patternRanking.ranked_patterns]);
+
+  const accuracySparkline = useMemo(
+    () => buildSparkline(performanceAnalytics.accuracy_timeline),
+    [performanceAnalytics.accuracy_timeline]
+  );
+
+  const learningSparkline = useMemo(
+    () => buildSparkline(performanceAnalytics.learning_curve),
+    [performanceAnalytics.learning_curve]
+  );
+
+  const winLossTotal =
+    performanceAnalytics.win_loss_chart.wins + performanceAnalytics.win_loss_chart.losses;
+  const winPercent = winLossTotal
+    ? (performanceAnalytics.win_loss_chart.wins / winLossTotal) * 100
+    : 0;
+  const lossPercent = winLossTotal
+    ? (performanceAnalytics.win_loss_chart.losses / winLossTotal) * 100
+    : 0;
 
   return (
     <main className="dashboard">
@@ -1144,6 +1280,138 @@ function App() {
                 ) : (
                   <tr>
                     <td colSpan={7}>Nenhuma estrategia selecionada ainda.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel title="Performance Analytics" subtitle="monitoramento continuo do desempenho real da IA">
+          <div className="learning-metrics">
+            <p><strong>Overall Accuracy:</strong> {performanceAnalytics.overall_accuracy}%</p>
+            <p><strong>Today's Accuracy:</strong> {performanceAnalytics.todays_accuracy}%</p>
+            <p><strong>Last 100 Predictions:</strong> {performanceAnalytics.last_100_predictions}</p>
+            <p><strong>Win Rate:</strong> {performanceAnalytics.win_rate}%</p>
+            <p><strong>Loss Rate:</strong> {performanceAnalytics.loss_rate}%</p>
+            <p><strong>Average Confidence:</strong> {performanceAnalytics.average_confidence}%</p>
+            <p><strong>Average Risk:</strong> {performanceAnalytics.average_risk}%</p>
+            <p><strong>Prediction Accuracy:</strong> {performanceAnalytics.prediction_accuracy}%</p>
+            <p><strong>Strategy Accuracy:</strong> {performanceAnalytics.strategy_accuracy}%</p>
+            <p><strong>Pattern Accuracy:</strong> {performanceAnalytics.pattern_accuracy}%</p>
+            <p><strong>Learning Evolution:</strong> {performanceAnalytics.learning_evolution}%</p>
+            <p><strong>Best Strategy:</strong> {performanceAnalytics.best_strategy}</p>
+            <p><strong>Worst Strategy:</strong> {performanceAnalytics.worst_strategy}</p>
+            <p><strong>Best Pattern:</strong> {performanceAnalytics.best_pattern}</p>
+            <p><strong>Worst Pattern:</strong> {performanceAnalytics.worst_pattern}</p>
+          </div>
+
+          <div className="chart-grid">
+            <div className="chart-card">
+              <h4 className="status-label">Win/Loss Chart</h4>
+              <div className="stacked-bar" aria-label="Win and loss distribution">
+                <div className="stacked-win" style={{ width: `${winPercent}%` }} />
+                <div className="stacked-loss" style={{ width: `${lossPercent}%` }} />
+              </div>
+              <p className="status-label">
+                Wins: {performanceAnalytics.win_loss_chart.wins} | Losses: {performanceAnalytics.win_loss_chart.losses}
+              </p>
+            </div>
+
+            <div className="chart-card">
+              <h4 className="status-label">Accuracy Timeline</h4>
+              <svg className="sparkline" viewBox="0 0 320 84" role="img" aria-label="Accuracy timeline">
+                <polyline points={accuracySparkline} fill="none" stroke="var(--accent-cyan)" strokeWidth="2" />
+              </svg>
+            </div>
+
+            <div className="chart-card">
+              <h4 className="status-label">Learning Curve</h4>
+              <svg className="sparkline" viewBox="0 0 320 84" role="img" aria-label="Learning curve">
+                <polyline points={learningSparkline} fill="none" stroke="var(--accent-lime)" strokeWidth="2" />
+              </svg>
+            </div>
+          </div>
+
+          <div className="chart-grid">
+            <div className="chart-card">
+              <h4 className="status-label">Accuracy por hora</h4>
+              <div className="bar-list">
+                {performanceAnalytics.accuracy_by_hour.slice(0, 12).map((item) => (
+                  <div className="bar-row" key={`hour-${item.key}`}>
+                    <span className="bar-label">{item.key}h</span>
+                    <div className="bar-track">
+                      <div className="bar-fill" style={{ width: `${item.accuracy}%` }} />
+                    </div>
+                    <span className="bar-value">{item.accuracy}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="chart-card">
+              <h4 className="status-label">Accuracy por estrategia</h4>
+              <div className="bar-list">
+                {performanceAnalytics.accuracy_by_strategy.slice(0, 8).map((item) => (
+                  <div className="bar-row" key={`strategy-${item.key}`}>
+                    <span className="bar-label">{item.key}</span>
+                    <div className="bar-track">
+                      <div className="bar-fill" style={{ width: `${item.accuracy}%` }} />
+                    </div>
+                    <span className="bar-value">{item.accuracy}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="chart-card">
+              <h4 className="status-label">Performance por padrao</h4>
+              <div className="bar-list">
+                {performanceAnalytics.performance_by_pattern.slice(0, 8).map((item) => (
+                  <div className="bar-row" key={`pattern-${item.key}`}>
+                    <span className="bar-label">{item.key}</span>
+                    <div className="bar-track">
+                      <div className="bar-fill" style={{ width: `${item.accuracy}%` }} />
+                    </div>
+                    <span className="bar-value">{item.accuracy}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <h4 className="status-label">Historico dos ultimos 100 resultados</h4>
+          <div className="pattern-table-wrapper">
+            <table className="pattern-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Outcome</th>
+                  <th>Strategy</th>
+                  <th>Pattern</th>
+                  <th>Prediction Acc.</th>
+                  <th>Confidence</th>
+                  <th>Risk</th>
+                  <th>Learning</th>
+                </tr>
+              </thead>
+              <tbody>
+                {performanceAnalytics.last_results.length ? (
+                  performanceAnalytics.last_results.map((item) => (
+                    <tr key={item.id}>
+                      <td>{formatClock(new Date(item.timestamp))}</td>
+                      <td>{item.outcome}</td>
+                      <td>{item.strategy}</td>
+                      <td>{item.pattern}</td>
+                      <td>{item.prediction_accuracy}%</td>
+                      <td>{item.confidence}%</td>
+                      <td>{item.risk}%</td>
+                      <td>{item.learning_score}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={8}>Sem resultados historicos ainda.</td>
                   </tr>
                 )}
               </tbody>

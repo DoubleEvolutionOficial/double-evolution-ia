@@ -1,6 +1,7 @@
 import { LearningEngineState } from "../learning/types";
 import { PatternDiscoveryResult } from "../pattern-discovery/types";
 import { PatternRankingResult } from "../pattern-ranking/types";
+import { PerformanceAnalyticsSnapshot } from "../performance-analytics/types";
 import { StrategyCenterState } from "../strategy/types";
 
 export interface StorageDriver {
@@ -35,4 +36,9 @@ export type PersistentPatternRankingRecord = {
 export type PersistentStrategyCenterRecord = {
   updated_at: string;
   state: StrategyCenterState;
+};
+
+export type PersistentPerformanceAnalyticsRecord = {
+  updated_at: string;
+  snapshot: PerformanceAnalyticsSnapshot;
 };

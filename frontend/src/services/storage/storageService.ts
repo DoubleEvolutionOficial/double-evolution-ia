@@ -1,10 +1,12 @@
 import { LearningEngineState } from "../learning/types";
 import { PatternDiscoveryResult } from "../pattern-discovery/types";
 import { PatternRankingResult } from "../pattern-ranking/types";
+import { PerformanceAnalyticsSnapshot } from "../performance-analytics/types";
 import { StrategyCenterState } from "../strategy/types";
 import { LocalStorageDriver } from "./localStorageDriver";
 import {
   PersistentLearningRecord,
+  PersistentPerformanceAnalyticsRecord,
   PersistentPatternDiscoveryRecord,
   PersistentPatternRankingRecord,
   PersistentStrategyCenterRecord,
@@ -16,6 +18,7 @@ const LEARNING_STORAGE_KEY = "double-evolution.learning-engine.v1";
 const PATTERN_DISCOVERY_STORAGE_KEY = "double-evolution.pattern-discovery.v1";
 const PATTERN_RANKING_STORAGE_KEY = "double-evolution.pattern-ranking.v1";
 const STRATEGY_CENTER_STORAGE_KEY = "double-evolution.strategy-center.v1";
+const PERFORMANCE_ANALYTICS_STORAGE_KEY = "double-evolution.performance-analytics.v1";
 
 export class StorageService {
   private readonly driver: StorageDriver;
@@ -162,6 +165,38 @@ export class StorageService {
     this.driver.removeItem(STRATEGY_CENTER_STORAGE_KEY);
   }
 
+  loadPerformanceAnalyticsSnapshot(): PerformanceAnalyticsSnapshot | null {
+    try {
+      const raw = this.driver.getItem(PERFORMANCE_ANALYTICS_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(raw) as PersistentPerformanceAnalyticsRecord;
+      return parsed?.snapshot ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  savePerformanceAnalyticsSnapshot(snapshot: PerformanceAnalyticsSnapshot): string {
+    const now = new Date().toISOString();
+    const payload: PersistentPerformanceAnalyticsRecord = {
+      updated_at: now,
+      snapshot: {
+        ...snapshot,
+        updated_at: now,
+      },
+    };
+
+    this.driver.setItem(PERFORMANCE_ANALYTICS_STORAGE_KEY, JSON.stringify(payload));
+    return now;
+  }
+
+  clearPerformanceAnalyticsSnapshot(): void {
+    this.driver.removeItem(PERFORMANCE_ANALYTICS_STORAGE_KEY);
+  }
+
   getStorageInfo(autoSave = true): PersistentStorageInfo {
     try {
       const raw = this.driver.getItem(LEARNING_STORAGE_KEY);
@@ -279,6 +314,40 @@ export class StorageService {
 
       const parsed = JSON.parse(raw) as PersistentStrategyCenterRecord;
       const totalRecords = parsed.state?.history?.length ?? 0;
+
+      return {
+        status: "ready",
+        last_save: parsed.updated_at ?? null,
+        total_records: totalRecords,
+        memory_usage: raw.length,
+        auto_save: autoSave,
+      };
+    } catch {
+      return {
+        status: "error",
+        last_save: null,
+        total_records: 0,
+        memory_usage: 0,
+        auto_save: autoSave,
+      };
+    }
+  }
+
+  getPerformanceAnalyticsStorageInfo(autoSave = true): PersistentStorageInfo {
+    try {
+      const raw = this.driver.getItem(PERFORMANCE_ANALYTICS_STORAGE_KEY);
+      if (!raw) {
+        return {
+          status: "empty",
+          last_save: null,
+          total_records: 0,
+          memory_usage: 0,
+          auto_save: autoSave,
+        };
+      }
+
+      const parsed = JSON.parse(raw) as PersistentPerformanceAnalyticsRecord;
+      const totalRecords = parsed.snapshot?.last_results?.length ?? 0;
 
       return {
         status: "ready",
