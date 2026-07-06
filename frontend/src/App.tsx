@@ -1,90 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
 import { JsonViewer } from "./components/JsonViewer";
 import { Panel } from "./components/Panel";
 import { StatusBadge } from "./components/StatusBadge";
+import { liveDataService } from "./services/live-data/liveDataService";
+import { LiveDataEvent } from "./services/live-data/types";
 import {
   LaboratoryAnalyzeResponse,
   LaboratoryEvent,
   LaboratoryHealth,
 } from "./types/laboratory";
 import "./App.css";
-
-const SAMPLE_EVENTS: LaboratoryEvent[] = [
-  {
-    timestamp: "2026-07-05T10:00:00Z",
-    hour: 10,
-    minute: 0,
-    side: "left",
-    distance: 12,
-    classification: "DEVEDOR",
-    confidence: 84,
-    score: 2.5,
-    triggered_rules: ["REG-002"],
-    recommendation: "Revisar",
-  },
-  {
-    timestamp: "2026-07-05T10:01:00Z",
-    hour: 10,
-    minute: 1,
-    side: "left",
-    distance: 11,
-    classification: "DEVEDOR",
-    confidence: 83,
-    score: 2.4,
-    triggered_rules: ["REG-002"],
-    recommendation: "Revisar",
-  },
-  {
-    timestamp: "2026-07-05T10:02:00Z",
-    hour: 10,
-    minute: 2,
-    side: "right",
-    distance: 10,
-    classification: "PAGADOR",
-    confidence: 82,
-    score: 2.3,
-    triggered_rules: ["REG-003"],
-    recommendation: "Aprovar",
-  },
-  {
-    timestamp: "2026-07-05T10:03:00Z",
-    hour: 10,
-    minute: 3,
-    side: "right",
-    distance: 9,
-    classification: "PAGADOR",
-    confidence: 81,
-    score: 2.1,
-    triggered_rules: ["REG-003"],
-    recommendation: "Aprovar",
-  },
-  {
-    timestamp: "2026-07-05T10:04:00Z",
-    hour: 10,
-    minute: 4,
-    side: "left",
-    distance: 8,
-    classification: "DEVEDOR",
-    confidence: 80,
-    score: 2,
-    triggered_rules: ["REG-002"],
-    recommendation: "Revisar",
-  },
-  {
-    timestamp: "2026-07-05T10:05:00Z",
-    hour: 10,
-    minute: 5,
-    side: "left",
-    distance: 7.5,
-    classification: "DEVEDOR",
-    confidence: 79,
-    score: 2,
-    triggered_rules: ["REG-002"],
-    recommendation: "Revisar",
-  },
-];
 
 type RequestState = "idle" | "loading" | "success" | "error" | "offline";
 
@@ -119,13 +46,30 @@ function requestStateLabel(state: RequestState): string {
   return "idle";
 }
 
+function toLaboratoryEvent(event: LiveDataEvent): LaboratoryEvent {
+  const when = new Date(event.timestamp);
+  const classification = event.color === "red" ? "DEVEDOR" : "PAGADOR";
+
+  return {
+    timestamp: event.timestamp,
+    hour: when.getUTCHours(),
+    minute: when.getUTCMinutes(),
+    side: event.number % 2 === 0 ? "right" : "left",
+    distance: Number((event.number / 2 + 3).toFixed(1)),
+    classification,
+    confidence: event.white ? 72 : 84,
+    score: event.white ? 1.8 : 2.4,
+    triggered_rules: classification === "DEVEDOR" ? ["REG-002"] : ["REG-003"],
+    recommendation: classification === "DEVEDOR" ? "Revisar" : "Aprovar",
+  };
+}
+
 function App() {
   const [health, setHealth] = useState<LaboratoryHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [historyInput, setHistoryInput] = useState(
-    JSON.stringify(SAMPLE_EVENTS, null, 2)
-  );
+  const [liveConnected, setLiveConnected] = useState(liveDataService.isConnected());
+  const [liveEvents, setLiveEvents] = useState<LiveDataEvent[]>(liveDataService.getLatestEvents());
   const [analysis, setAnalysis] = useState<LaboratoryAnalyzeResponse | null>(
     null
   );
@@ -134,18 +78,30 @@ function App() {
   const [healthError, setHealthError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
-  const parsedEvents = useMemo(() => {
-    try {
-      const parsed = JSON.parse(historyInput) as LaboratoryEvent[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }, [historyInput]);
-
   useEffect(() => {
+    const unsubscribe = liveDataService.subscribe((events) => {
+      setLiveEvents(events);
+      setLiveConnected(liveDataService.isConnected());
+    });
+
+    liveDataService.connect();
     handleCheckHealth();
+
+    return () => {
+      unsubscribe();
+      liveDataService.disconnect();
+    };
   }, []);
+
+  function handleConnectLiveData() {
+    liveDataService.connect();
+    setLiveConnected(liveDataService.isConnected());
+  }
+
+  function handleDisconnectLiveData() {
+    liveDataService.disconnect();
+    setLiveConnected(liveDataService.isConnected());
+  }
 
   async function handleCheckHealth() {
     setIsCheckingHealth(true);
@@ -170,9 +126,9 @@ function App() {
     setAnalysisError(null);
     setAnalysisState("loading");
     try {
-      const events = JSON.parse(historyInput) as LaboratoryEvent[];
-      if (!Array.isArray(events)) {
-        throw new Error("O histórico deve ser um array JSON de eventos");
+      const events = liveDataService.getLatestEvents().slice(-24).map(toLaboratoryEvent);
+      if (!events.length) {
+        throw new Error("Sem eventos no Live Data Service para analise");
       }
       const result = await analyzeLaboratory({ events });
       setAnalysis(result);
@@ -203,23 +159,43 @@ function App() {
       <section className="actions">
         <Panel
           title="Area de Historico"
-          subtitle="Cole um array JSON com eventos para executar a analise"
+          subtitle="Fluxo em tempo real via LiveDataService (Mock Provider)"
         >
-          <textarea
-            className="history-editor"
-            value={historyInput}
-            onChange={(event) => setHistoryInput(event.target.value)}
-          />
+          {liveEvents.length ? (
+            <JsonViewer data={liveEvents.slice(-12)} />
+          ) : (
+            <p className="empty-state">Sem eventos recebidos do stream no momento.</p>
+          )}
           <div className="action-row">
             <button
               className="analyze-button"
               type="button"
+              onClick={handleConnectLiveData}
+              disabled={liveConnected}
+            >
+              Conectar
+            </button>
+            <button
+              className="analyze-button"
+              type="button"
+              onClick={handleDisconnectLiveData}
+              disabled={!liveConnected}
+            >
+              Desconectar
+            </button>
+            <button
+              className="analyze-button"
+              type="button"
               onClick={handleAnalyze}
-              disabled={isAnalyzing}
+              disabled={isAnalyzing || !liveEvents.length}
             >
               {isAnalyzing ? "Analisando..." : "Analisar"}
             </button>
-            <span>{parsedEvents.length} eventos detectados</span>
+            <span>{liveEvents.length} eventos detectados</span>
+          </div>
+          <div className="status-line">
+            <p className="status-label">Estado do stream</p>
+            <StatusBadge status={liveConnected ? "online" : "offline"} />
           </div>
           <div className="status-line">
             <p className="status-label">Estado da analise</p>
