@@ -4,10 +4,12 @@ import {
   LiveDataProviderName,
   LiveDataProviderContract,
   LiveDataServiceContract,
+  SimulatorSpeed,
 } from "./types";
 import { MockDataProvider } from "./providers/mockLiveDataProvider";
 import { ManualDataProvider } from "./providers/manualDataProvider";
 import { ExternalDataProvider } from "./providers/externalDataProvider";
+import { RealisticSimulatorProvider } from "./providers/realisticSimulatorProvider";
 
 type ProviderMap = Record<LiveDataProviderName, LiveDataProviderContract>;
 
@@ -31,6 +33,7 @@ export class LiveDataService implements LiveDataServiceContract {
         new ExternalDataProvider({
           url: import.meta.env.VITE_EXTERNAL_DATA_URL,
         }),
+      simulator: providers.simulator ?? new RealisticSimulatorProvider(),
     };
 
     this.currentProviderName = initialProviderName;
@@ -68,7 +71,7 @@ export class LiveDataService implements LiveDataServiceContract {
   }
 
   getAvailableProviders(): LiveDataProviderName[] {
-    return ["mock", "manual", "external"];
+    return ["mock", "manual", "external", "simulator"];
   }
 
   setProvider(name: LiveDataProviderName): void {
@@ -99,6 +102,35 @@ export class LiveDataService implements LiveDataServiceContract {
     const manualProvider = this.providers.manual;
     if (manualProvider instanceof ManualDataProvider) {
       manualProvider.pushEvent(event);
+    }
+  }
+
+  setSimulatorSpeed(speed: SimulatorSpeed): void {
+    const simulator = this.providers.simulator;
+    if (simulator instanceof RealisticSimulatorProvider) {
+      simulator.setSpeed(speed);
+    }
+  }
+
+  startSimulator(): void {
+    const simulator = this.providers.simulator;
+    if (simulator instanceof RealisticSimulatorProvider) {
+      simulator.start();
+    }
+  }
+
+  pauseSimulator(): void {
+    const simulator = this.providers.simulator;
+    if (simulator instanceof RealisticSimulatorProvider) {
+      simulator.pause();
+    }
+  }
+
+  resetSimulator(): void {
+    const simulator = this.providers.simulator;
+    if (simulator instanceof RealisticSimulatorProvider) {
+      simulator.reset();
+      this.emit(simulator.getLatestEvents());
     }
   }
 

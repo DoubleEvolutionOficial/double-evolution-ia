@@ -6,9 +6,11 @@ export type LiveDataEvent = {
   sequence: string[];
 };
 
+export type SimulatorSpeed = "lento" | "normal" | "rapido";
+
 export type LiveDataCallback = (events: LiveDataEvent[]) => void;
 
-export type LiveDataProviderName = "mock" | "manual" | "external";
+export type LiveDataProviderName = "mock" | "manual" | "external" | "simulator";
 
 export interface LiveDataProviderContract {
   connect(): void;
@@ -23,4 +25,8 @@ export interface LiveDataServiceContract extends LiveDataProviderContract {
   setProvider(name: LiveDataProviderName): void;
   getAvailableProviders(): LiveDataProviderName[];
   pushManualEvent?(event: LiveDataEvent): void;
+  setSimulatorSpeed?(speed: SimulatorSpeed): void;
+  startSimulator?(): void;
+  pauseSimulator?(): void;
+  resetSimulator?(): void;
 }

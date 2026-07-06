@@ -30,6 +30,7 @@ import { PersistentStorageInfo } from "./services/storage/types";
 import {
   LiveDataEvent,
   LiveDataProviderName,
+  SimulatorSpeed,
 } from "./services/live-data/types";
 import {
   LaboratoryAnalyzeResponse,
@@ -221,6 +222,7 @@ function App() {
   const [providerName, setProviderName] = useState<LiveDataProviderName>(
     liveDataService.getProviderName()
   );
+  const [simulatorSpeed, setSimulatorSpeed] = useState<SimulatorSpeed>("normal");
   const [availableProviders] = useState<LiveDataProviderName[]>(
     liveDataService.getAvailableProviders()
   );
@@ -647,10 +649,37 @@ function App() {
     liveDataService.setProvider(name);
     setProviderName(liveDataService.getProviderName());
     setLiveConnected(liveDataService.isConnected());
+    if (name === "simulator") {
+      liveDataService.setSimulatorSpeed?.(simulatorSpeed);
+      liveDataService.startSimulator?.();
+    }
     learningEngineRef.current = new LearningEngine();
     lastIngestedIndexRef.current = 0;
     setLearning(createEmptyLearning());
     refreshStorageInfo();
+  }
+
+  function handleSimulatorSpeedChange(nextSpeed: SimulatorSpeed) {
+    setSimulatorSpeed(nextSpeed);
+    liveDataService.setSimulatorSpeed?.(nextSpeed);
+  }
+
+  function handleSimulatorStart() {
+    liveDataService.startSimulator?.();
+    if (!liveConnected) {
+      liveDataService.connect();
+    }
+    setLiveConnected(liveDataService.isConnected());
+  }
+
+  function handleSimulatorPause() {
+    liveDataService.pauseSimulator?.();
+    setLiveConnected(liveDataService.isConnected());
+  }
+
+  function handleSimulatorReset() {
+    liveDataService.resetSimulator?.();
+    setLiveEvents(liveDataService.getLatestEvents());
   }
 
   async function handleCheckHealth() {
@@ -907,6 +936,44 @@ function App() {
               >
                 Inserir evento manual
               </button>
+            ) : null}
+            {providerName === "simulator" ? (
+              <>
+                <label className="provider-select">
+                  Velocidade
+                  <select
+                    value={simulatorSpeed}
+                    onChange={(event) =>
+                      handleSimulatorSpeedChange(event.target.value as SimulatorSpeed)
+                    }
+                  >
+                    <option value="lento">lento</option>
+                    <option value="normal">normal</option>
+                    <option value="rapido">rapido</option>
+                  </select>
+                </label>
+                <button
+                  className="analyze-button"
+                  type="button"
+                  onClick={handleSimulatorStart}
+                >
+                  Iniciar simulacao
+                </button>
+                <button
+                  className="analyze-button"
+                  type="button"
+                  onClick={handleSimulatorPause}
+                >
+                  Pausar simulacao
+                </button>
+                <button
+                  className="analyze-button"
+                  type="button"
+                  onClick={handleSimulatorReset}
+                >
+                  Resetar simulacao
+                </button>
+              </>
             ) : null}
             <span>{liveEvents.length} eventos detectados</span>
             {isAnalyzing ? <span className="spinner" aria-label="Analisando" /> : null}
