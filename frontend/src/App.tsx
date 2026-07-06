@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
 import { JsonViewer } from "./components/JsonViewer";
@@ -48,7 +48,76 @@ const SAMPLE_EVENTS: LaboratoryEvent[] = [
     triggered_rules: ["REG-003"],
     recommendation: "Aprovar",
   },
+  {
+    timestamp: "2026-07-05T10:03:00Z",
+    hour: 10,
+    minute: 3,
+    side: "right",
+    distance: 9,
+    classification: "PAGADOR",
+    confidence: 81,
+    score: 2.1,
+    triggered_rules: ["REG-003"],
+    recommendation: "Aprovar",
+  },
+  {
+    timestamp: "2026-07-05T10:04:00Z",
+    hour: 10,
+    minute: 4,
+    side: "left",
+    distance: 8,
+    classification: "DEVEDOR",
+    confidence: 80,
+    score: 2,
+    triggered_rules: ["REG-002"],
+    recommendation: "Revisar",
+  },
+  {
+    timestamp: "2026-07-05T10:05:00Z",
+    hour: 10,
+    minute: 5,
+    side: "left",
+    distance: 7.5,
+    classification: "DEVEDOR",
+    confidence: 79,
+    score: 2,
+    triggered_rules: ["REG-002"],
+    recommendation: "Revisar",
+  },
 ];
+
+type RequestState = "idle" | "loading" | "success" | "error" | "offline";
+
+function mapErrorToState(err: unknown): { state: RequestState; message: string } {
+  const message = err instanceof Error ? err.message : "Erro inesperado na API";
+  const lower = message.toLowerCase();
+  const isOffline =
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("network error") ||
+    lower.includes("offline");
+
+  return {
+    state: isOffline ? "offline" : "error",
+    message: isOffline ? "API offline ou indisponivel no momento" : message,
+  };
+}
+
+function requestStateLabel(state: RequestState): string {
+  if (state === "loading") {
+    return "loading";
+  }
+  if (state === "success") {
+    return "sucesso";
+  }
+  if (state === "error") {
+    return "erro";
+  }
+  if (state === "offline") {
+    return "offline";
+  }
+  return "idle";
+}
 
 function App() {
   const [health, setHealth] = useState<LaboratoryHealth | null>(null);
@@ -60,7 +129,10 @@ function App() {
   const [analysis, setAnalysis] = useState<LaboratoryAnalyzeResponse | null>(
     null
   );
-  const [error, setError] = useState<string | null>(null);
+  const [healthState, setHealthState] = useState<RequestState>("idle");
+  const [analysisState, setAnalysisState] = useState<RequestState>("idle");
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   const parsedEvents = useMemo(() => {
     try {
@@ -71,14 +143,23 @@ function App() {
     }
   }, [historyInput]);
 
+  useEffect(() => {
+    handleCheckHealth();
+  }, []);
+
   async function handleCheckHealth() {
     setIsCheckingHealth(true);
-    setError(null);
+    setHealthError(null);
+    setHealthState("loading");
     try {
       const status = await fetchHealth();
       setHealth(status);
+      setHealthState("success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao consultar status");
+      const mapped = mapErrorToState(err);
+      setHealthState(mapped.state);
+      setHealthError(mapped.message);
+      setHealth({ status: "offline", module: "laboratory" });
     } finally {
       setIsCheckingHealth(false);
     }
@@ -86,7 +167,8 @@ function App() {
 
   async function handleAnalyze() {
     setIsAnalyzing(true);
-    setError(null);
+    setAnalysisError(null);
+    setAnalysisState("loading");
     try {
       const events = JSON.parse(historyInput) as LaboratoryEvent[];
       if (!Array.isArray(events)) {
@@ -94,8 +176,11 @@ function App() {
       }
       const result = await analyzeLaboratory({ events });
       setAnalysis(result);
+      setAnalysisState("success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao analisar histórico");
+      const mapped = mapErrorToState(err);
+      setAnalysisState(mapped.state);
+      setAnalysisError(mapped.message);
     } finally {
       setIsAnalyzing(false);
     }
@@ -110,7 +195,9 @@ function App() {
             Dashboard operacional para inspeção completa do DecisionPipeline
           </p>
         </div>
-        <StatusBadge status={health?.status ?? "offline"} />
+        <StatusBadge
+          status={healthState === "success" ? health?.status ?? "online" : requestStateLabel(healthState)}
+        />
       </header>
 
       <section className="actions">
@@ -134,6 +221,11 @@ function App() {
             </button>
             <span>{parsedEvents.length} eventos detectados</span>
           </div>
+          <div className="status-line">
+            <p className="status-label">Estado da analise</p>
+            <StatusBadge status={requestStateLabel(analysisState)} />
+          </div>
+          {analysisError ? <p className="error-text">{analysisError}</p> : null}
         </Panel>
 
         <Panel title="Status da IA" subtitle="Consome GET /api/v1/laboratory/health">
@@ -146,10 +238,16 @@ function App() {
             >
               {isCheckingHealth ? "Consultando..." : "Atualizar status"}
             </button>
-            <StatusBadge status={health?.status ?? "offline"} />
+            <StatusBadge
+              status={healthState === "success" ? health?.status ?? "online" : requestStateLabel(healthState)}
+            />
+          </div>
+          <div className="status-line">
+            <p className="status-label">Estado do health-check</p>
+            <StatusBadge status={requestStateLabel(healthState)} />
           </div>
           {health ? <JsonViewer data={health} /> : <p className="empty-state">Sem status consultado.</p>}
-          {error ? <p className="error-text">{error}</p> : null}
+          {healthError ? <p className="error-text">{healthError}</p> : null}
         </Panel>
       </section>
 
@@ -157,11 +255,17 @@ function App() {
         <Panel title="Painel de Estatisticas" subtitle="statistics">
           {analysis ? <JsonViewer data={analysis.statistics} /> : <p className="empty-state">Execute uma analise para exibir dados.</p>}
         </Panel>
-        <Panel title="Padroes e Regime" subtitle="patterns e regime">
-          {analysis ? <JsonViewer data={{ patterns: analysis.patterns, regime: analysis.regime }} /> : <p className="empty-state">Sem dados de padroes e regime.</p>}
+        <Panel title="Painel de Padroes" subtitle="patterns">
+          {analysis ? <JsonViewer data={analysis.patterns} /> : <p className="empty-state">Sem dados de padroes.</p>}
         </Panel>
-        <Panel title="Painel de Tendencia" subtitle="trend e seasonality">
-          {analysis ? <JsonViewer data={{ trend: analysis.trend, seasonality: analysis.seasonality }} /> : <p className="empty-state">Sem dados de tendencia.</p>}
+        <Panel title="Painel de Regime" subtitle="regime">
+          {analysis ? <JsonViewer data={analysis.regime} /> : <p className="empty-state">Sem dados de regime.</p>}
+        </Panel>
+        <Panel title="Painel de Tendencia" subtitle="trend">
+          {analysis ? <JsonViewer data={analysis.trend} /> : <p className="empty-state">Sem dados de tendencia.</p>}
+        </Panel>
+        <Panel title="Painel de Sazonalidade" subtitle="seasonality">
+          {analysis ? <JsonViewer data={analysis.seasonality} /> : <p className="empty-state">Sem dados de sazonalidade.</p>}
         </Panel>
         <Panel title="Painel de Correlacao" subtitle="correlation">
           {analysis ? <JsonViewer data={analysis.correlation} /> : <p className="empty-state">Sem dados de correlacao.</p>}

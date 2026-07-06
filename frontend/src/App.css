@@ -77,6 +77,18 @@ body {
   border: 1px solid rgba(255, 182, 77, 0.45);
 }
 
+.status-badge-danger {
+  background: rgba(255, 93, 115, 0.16);
+  color: var(--danger);
+  border: 1px solid rgba(255, 93, 115, 0.45);
+}
+
+.status-badge-info {
+  background: rgba(0, 214, 255, 0.16);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 214, 255, 0.45);
+}
+
 .actions {
   display: grid;
   gap: 1rem;
@@ -127,6 +139,20 @@ body {
 .error-text {
   color: var(--danger);
   margin: 0;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.7rem;
+}
+
+.status-label {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
 }
 
 .panel-grid {
