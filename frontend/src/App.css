@@ -1,0 +1,187 @@
+:root {
+  color-scheme: dark;
+  --bg-main: #090c12;
+  --bg-grid-a: rgba(0, 207, 255, 0.11);
+  --bg-grid-b: rgba(255, 94, 98, 0.08);
+  --panel-bg: rgba(15, 20, 31, 0.84);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --text-primary: #f7f8fc;
+  --text-muted: #a6afc3;
+  --accent-cyan: #00d6ff;
+  --accent-coral: #ff7e6d;
+  --accent-lime: #87f25f;
+  --warning: #ffb64d;
+  --danger: #ff5d73;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 5% 10%, var(--bg-grid-a) 0%, transparent 38%),
+    radial-gradient(circle at 95% 5%, var(--bg-grid-b) 0%, transparent 30%),
+    var(--bg-main);
+  color: var(--text-primary);
+}
+
+.dashboard {
+  min-height: 100vh;
+  padding: 1.25rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.dashboard-header {
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  padding: 1.25rem;
+  background: linear-gradient(130deg, rgba(0, 214, 255, 0.12), rgba(255, 126, 109, 0.07));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.dashboard-title {
+  margin: 0;
+  font-size: clamp(1.2rem, 2.8vw, 2rem);
+  letter-spacing: 0.04em;
+}
+
+.dashboard-subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+}
+
+.status-badge {
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.status-badge-success {
+  background: rgba(135, 242, 95, 0.16);
+  color: var(--accent-lime);
+  border: 1px solid rgba(135, 242, 95, 0.45);
+}
+
+.status-badge-warning {
+  background: rgba(255, 182, 77, 0.16);
+  color: var(--warning);
+  border: 1px solid rgba(255, 182, 77, 0.45);
+}
+
+.actions {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1.2fr 1fr;
+}
+
+.history-editor {
+  width: 100%;
+  min-height: 220px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: rgba(4, 6, 11, 0.78);
+  color: #d9ddf0;
+  padding: 0.8rem;
+  font-size: 0.88rem;
+  font-family: "JetBrains Mono", "Consolas", monospace;
+  resize: vertical;
+}
+
+.action-row {
+  margin-top: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.analyze-button {
+  border: 1px solid rgba(0, 214, 255, 0.5);
+  background: linear-gradient(120deg, rgba(0, 214, 255, 0.28), rgba(255, 126, 109, 0.22));
+  color: #f4f8ff;
+  border-radius: 12px;
+  font-weight: 700;
+  padding: 0.68rem 1.2rem;
+  cursor: pointer;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.analyze-button:hover {
+  transform: translateY(-1px);
+}
+
+.analyze-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error-text {
+  color: var(--danger);
+  margin: 0;
+}
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.panel-header {
+  padding: 0.8rem 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.panel-header p {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.panel-content {
+  padding: 0.75rem;
+}
+
+.json-viewer {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #c9d4ee;
+  font-family: "JetBrains Mono", "Consolas", monospace;
+}
+
+.empty-state {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+@media (max-width: 1024px) {
+  .actions,
+  .panel-grid {
+    grid-template-columns: 1fr;
+  }
+}
