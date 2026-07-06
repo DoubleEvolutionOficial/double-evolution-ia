@@ -43,10 +43,12 @@ export class LiveDataService implements LiveDataServiceContract {
 
   connect(): void {
     this.currentProvider.connect();
+    this.emit();
   }
 
   disconnect(): void {
     this.currentProvider.disconnect();
+    this.emit();
   }
 
   isConnected(): boolean {
@@ -113,21 +115,31 @@ export class LiveDataService implements LiveDataServiceContract {
   }
 
   startSimulator(): void {
-    const simulator = this.providers.simulator;
+    if (this.currentProviderName !== "simulator") {
+      this.setProvider("simulator");
+    }
+
+    if (!this.currentProvider.isConnected()) {
+      this.currentProvider.connect();
+    }
+
+    const simulator = this.currentProvider;
     if (simulator instanceof RealisticSimulatorProvider) {
       simulator.start();
+      this.emit(simulator.getLatestEvents());
     }
   }
 
   pauseSimulator(): void {
-    const simulator = this.providers.simulator;
+    const simulator = this.currentProvider;
     if (simulator instanceof RealisticSimulatorProvider) {
       simulator.pause();
+      this.emit(simulator.getLatestEvents());
     }
   }
 
   resetSimulator(): void {
-    const simulator = this.providers.simulator;
+    const simulator = this.currentProvider;
     if (simulator instanceof RealisticSimulatorProvider) {
       simulator.reset();
       this.emit(simulator.getLatestEvents());

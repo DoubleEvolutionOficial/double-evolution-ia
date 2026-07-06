@@ -46,7 +46,6 @@ export class RealisticSimulatorProvider implements LiveDataProviderContract {
     }
 
     this.connected = true;
-    this.start();
     this.emit();
   }
 
@@ -87,7 +86,7 @@ export class RealisticSimulatorProvider implements LiveDataProviderContract {
 
   start(): void {
     if (!this.connected) {
-      return;
+      this.connect();
     }
 
     if (this.running) {
@@ -95,6 +94,7 @@ export class RealisticSimulatorProvider implements LiveDataProviderContract {
     }
 
     this.running = true;
+    this.pushSimulatedEvent();
     this.restartTimer();
     this.emit();
   }

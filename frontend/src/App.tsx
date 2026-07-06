@@ -636,8 +636,13 @@ function App() {
   ]);
 
   function handleConnectLiveData() {
-    liveDataService.connect();
+    if (providerName === "simulator") {
+      liveDataService.startSimulator?.();
+    } else {
+      liveDataService.connect();
+    }
     setLiveConnected(liveDataService.isConnected());
+    setLiveEvents(liveDataService.getLatestEvents());
   }
 
   function handleDisconnectLiveData() {
@@ -647,12 +652,13 @@ function App() {
 
   function handleProviderChange(name: LiveDataProviderName) {
     liveDataService.setProvider(name);
-    setProviderName(liveDataService.getProviderName());
-    setLiveConnected(liveDataService.isConnected());
     if (name === "simulator") {
       liveDataService.setSimulatorSpeed?.(simulatorSpeed);
       liveDataService.startSimulator?.();
     }
+    setProviderName(liveDataService.getProviderName());
+    setLiveConnected(liveDataService.isConnected());
+    setLiveEvents(liveDataService.getLatestEvents());
     learningEngineRef.current = new LearningEngine();
     lastIngestedIndexRef.current = 0;
     setLearning(createEmptyLearning());
@@ -666,10 +672,8 @@ function App() {
 
   function handleSimulatorStart() {
     liveDataService.startSimulator?.();
-    if (!liveConnected) {
-      liveDataService.connect();
-    }
     setLiveConnected(liveDataService.isConnected());
+    setLiveEvents(liveDataService.getLatestEvents());
   }
 
   function handleSimulatorPause() {
