@@ -4,6 +4,8 @@ import { fetchHealth } from "./api/health";
 import { JsonViewer } from "./components/JsonViewer";
 import { Panel } from "./components/Panel";
 import { StatusBadge } from "./components/StatusBadge";
+import { LearningEngine } from "./services/learning/learningEngine";
+import { LearningSnapshot } from "./services/learning/types";
 import { liveDataService } from "./services/live-data/liveDataService";
 import {
   LiveDataEvent,
@@ -71,6 +73,24 @@ function formatClock(time: Date): string {
   return time.toLocaleTimeString("pt-BR", { hour12: false });
 }
 
+function createEmptyLearning(): LearningSnapshot {
+  return {
+    learning_score: 0,
+    samples: 0,
+    accuracy: 0,
+    adaptation_level: 0,
+    stability: 0,
+    pattern_memory: {},
+    trend_memory: {
+      up: 0,
+      down: 0,
+      flat: 0,
+      behavior_changes: 0,
+      average_gap_seconds: 0,
+    },
+  };
+}
+
 function App() {
   const [health, setHealth] = useState<LaboratoryHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
@@ -91,11 +111,14 @@ function App() {
   const [healthError, setHealthError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [lastAnalyzedAt, setLastAnalyzedAt] = useState<Date | null>(null);
+  const [learning, setLearning] = useState<LearningSnapshot>(createEmptyLearning);
 
   const debounceTimerRef = useRef<number | null>(null);
   const isAnalyzingRef = useRef(false);
   const pendingAutoAnalyzeRef = useRef(false);
   const lastAnalysisSignatureRef = useRef<string>("");
+  const learningEngineRef = useRef(new LearningEngine());
+  const lastIngestedIndexRef = useRef(0);
 
   const executeAnalysis = useCallback(
     async (reason: "auto" | "manual") => {
@@ -190,6 +213,21 @@ function App() {
       setLiveEvents(events);
       setLiveConnected(liveDataService.isConnected());
       setProviderName(liveDataService.getProviderName());
+
+      if (events.length >= lastIngestedIndexRef.current) {
+        const newEvents = events.slice(lastIngestedIndexRef.current);
+        newEvents.forEach((event) => learningEngineRef.current.ingest(event));
+        if (newEvents.length) {
+          setLearning(learningEngineRef.current.getSnapshot());
+        }
+        lastIngestedIndexRef.current = events.length;
+      } else {
+        learningEngineRef.current = new LearningEngine();
+        events.forEach((event) => learningEngineRef.current.ingest(event));
+        setLearning(learningEngineRef.current.getSnapshot());
+        lastIngestedIndexRef.current = events.length;
+      }
+
       if (events.length) {
         scheduleAutoAnalyze();
       }
@@ -221,6 +259,9 @@ function App() {
     liveDataService.setProvider(name);
     setProviderName(liveDataService.getProviderName());
     setLiveConnected(liveDataService.isConnected());
+    learningEngineRef.current = new LearningEngine();
+    lastIngestedIndexRef.current = 0;
+    setLearning(createEmptyLearning());
   }
 
   async function handleCheckHealth() {
@@ -399,6 +440,27 @@ function App() {
         </Panel>
         <Panel title="Painel de Explicacao" subtitle="explanation">
           {analysis ? <JsonViewer data={analysis.explanation} /> : <p className="empty-state">Sem dados de explicacao.</p>}
+        </Panel>
+        <Panel title="Learning" subtitle="aprendizado continuo do stream">
+          <div className="learning-metrics">
+            <p><strong>Learning Score:</strong> {learning.learning_score}</p>
+            <p><strong>Accuracy:</strong> {learning.accuracy}%</p>
+            <p><strong>Samples:</strong> {learning.samples}</p>
+            <p><strong>Memory Size:</strong> {Object.keys(learning.pattern_memory).length}</p>
+            <p><strong>Adaptation:</strong> {learning.adaptation_level}</p>
+            <p><strong>Stability:</strong> {learning.stability}</p>
+          </div>
+          <JsonViewer
+            data={{
+              learning_score: learning.learning_score,
+              samples: learning.samples,
+              accuracy: learning.accuracy,
+              adaptation_level: learning.adaptation_level,
+              stability: learning.stability,
+              pattern_memory: learning.pattern_memory,
+              trend_memory: learning.trend_memory,
+            }}
+          />
         </Panel>
       </section>
     </main>
