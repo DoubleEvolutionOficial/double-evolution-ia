@@ -8,15 +8,12 @@ export type LiveDataEvent = {
 
 export type LiveDataCallback = (events: LiveDataEvent[]) => void;
 
-export interface LiveDataProvider {
-  start(onEvent: (event: LiveDataEvent) => void): void;
-  stop(): void;
-}
-
-export interface LiveDataServiceContract {
+export interface LiveDataProviderContract {
   connect(): void;
   disconnect(): void;
   isConnected(): boolean;
   getLatestEvents(): LiveDataEvent[];
   subscribe(callback: LiveDataCallback): () => void;
 }
+
+export interface LiveDataServiceContract extends LiveDataProviderContract {}

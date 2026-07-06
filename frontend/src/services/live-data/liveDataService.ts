@@ -1,65 +1,35 @@
 import {
   LiveDataCallback,
-  LiveDataEvent,
-  LiveDataProvider,
+  LiveDataProviderContract,
   LiveDataServiceContract,
 } from "./types";
-import { MockLiveDataProvider } from "./providers/mockLiveDataProvider";
-
-const MAX_BUFFER = 64;
+import { MockDataProvider } from "./providers/mockLiveDataProvider";
 
 export class LiveDataService implements LiveDataServiceContract {
-  private readonly provider: LiveDataProvider;
-  private readonly callbacks = new Set<LiveDataCallback>();
-  private readonly events: LiveDataEvent[] = [];
-  private connected = false;
+  private readonly provider: LiveDataProviderContract;
 
-  constructor(provider: LiveDataProvider = new MockLiveDataProvider()) {
+  constructor(provider: LiveDataProviderContract = new MockDataProvider()) {
     this.provider = provider;
   }
 
   connect(): void {
-    if (this.connected) {
-      return;
-    }
-    this.connected = true;
-    this.provider.start((event) => {
-      this.events.push(event);
-      if (this.events.length > MAX_BUFFER) {
-        this.events.splice(0, this.events.length - MAX_BUFFER);
-      }
-      this.emit();
-    });
+    this.provider.connect();
   }
 
   disconnect(): void {
-    if (!this.connected) {
-      return;
-    }
-    this.connected = false;
-    this.provider.stop();
-    this.emit();
+    this.provider.disconnect();
   }
 
   isConnected(): boolean {
-    return this.connected;
+    return this.provider.isConnected();
   }
 
-  getLatestEvents(): LiveDataEvent[] {
-    return [...this.events];
+  getLatestEvents() {
+    return this.provider.getLatestEvents();
   }
 
   subscribe(callback: LiveDataCallback): () => void {
-    this.callbacks.add(callback);
-    callback(this.getLatestEvents());
-    return () => {
-      this.callbacks.delete(callback);
-    };
-  }
-
-  private emit(): void {
-    const snapshot = this.getLatestEvents();
-    this.callbacks.forEach((callback) => callback(snapshot));
+    return this.provider.subscribe(callback);
   }
 }
 
