@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
 import { JsonViewer } from "./components/JsonViewer";
@@ -11,6 +11,11 @@ import {
   DiscoveredPattern,
   PatternDiscoveryResult,
 } from "./services/pattern-discovery/types";
+import { PatternRankingEngine } from "./services/pattern-ranking/patternRankingEngine";
+import {
+  PatternRankingResult,
+  RankedPattern,
+} from "./services/pattern-ranking/types";
 import { liveDataService } from "./services/live-data/liveDataService";
 import { storageService } from "./services/storage/storageService";
 import { PersistentStorageInfo } from "./services/storage/types";
@@ -123,6 +128,13 @@ function createEmptyPatternDiscovery(): PatternDiscoveryResult {
   };
 }
 
+function createEmptyPatternRanking(): PatternRankingResult {
+  return {
+    scanned_at: new Date(0).toISOString(),
+    ranked_patterns: [],
+  };
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -155,9 +167,20 @@ function App() {
   const [patternDiscovery, setPatternDiscovery] = useState<PatternDiscoveryResult>(
     createEmptyPatternDiscovery
   );
+  const [patternRanking, setPatternRanking] = useState<PatternRankingResult>(
+    createEmptyPatternRanking
+  );
   const [isScanningPatterns, setIsScanningPatterns] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const [filterElite, setFilterElite] = useState(false);
+  const [filterHighConfidence, setFilterHighConfidence] = useState(false);
+  const [filterActive, setFilterActive] = useState(false);
+  const [filterRecent, setFilterRecent] = useState(false);
+  const [sortBy, setSortBy] = useState<
+    "score" | "confidence" | "accuracy" | "occurrences" | "recent"
+  >("score");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   const debounceTimerRef = useRef<number | null>(null);
   const isAnalyzingRef = useRef(false);
@@ -165,6 +188,7 @@ function App() {
   const lastAnalysisSignatureRef = useRef<string>("");
   const learningEngineRef = useRef(new LearningEngine());
   const patternDiscoveryEngineRef = useRef(new PatternDiscoveryEngine());
+  const patternRankingEngineRef = useRef(new PatternRankingEngine());
     const refreshStorageInfo = useCallback(() => {
       setStorageInfo(storageService.getStorageInfo(true));
     }, []);
@@ -190,11 +214,14 @@ function App() {
       }
 
       storageService.clearLearningState();
+      storageService.clearPatternDiscoveryResult();
+      storageService.clearPatternRankingResult();
       learningEngineRef.current = new LearningEngine();
       lastIngestedIndexRef.current = 0;
       setLearning(createEmptyLearning());
       setStorageMessage("Memoria persistente removida");
       setPatternDiscovery(createEmptyPatternDiscovery());
+      setPatternRanking(createEmptyPatternRanking());
       setScanProgress(0);
       setScanMessage(null);
       refreshStorageInfo();
@@ -304,6 +331,11 @@ function App() {
       setPatternDiscovery(storedDiscovery);
     }
 
+    const storedRanking = storageService.loadPatternRankingResult();
+    if (storedRanking) {
+      setPatternRanking(storedRanking);
+    }
+
     refreshStorageInfo();
 
     const unsubscribe = liveDataService.subscribe((events) => {
@@ -401,14 +433,17 @@ function App() {
       setScanProgress(45);
 
       const result = patternDiscoveryEngineRef.current.scan(state, previousPatterns);
+      const ranking = patternRankingEngineRef.current.rank(result, state);
 
       await delay(80);
       setScanProgress(75);
       storageService.savePatternDiscoveryResult(result);
+      storageService.savePatternRankingResult(ranking);
       refreshStorageInfo();
 
       await delay(80);
       setPatternDiscovery(result);
+      setPatternRanking(ranking);
       setScanProgress(100);
       setScanMessage(`Scan concluido as ${formatClock(new Date())}`);
     } catch {
@@ -418,6 +453,95 @@ function App() {
       setIsScanningPatterns(false);
     }
   }
+
+  const rankedPatterns = useMemo(() => {
+    const now = Date.now();
+    const recentThresholdMs = 5 * 60 * 1000;
+
+    const filtered = patternRanking.ranked_patterns.filter((pattern) => {
+      if (filterElite && pattern.rank !== "Elite") {
+        return false;
+      }
+      if (filterHighConfidence && pattern.confidence < 80) {
+        return false;
+      }
+      if (filterActive && pattern.status !== "active") {
+        return false;
+      }
+      if (filterRecent) {
+        if (!pattern.last_seen) {
+          return false;
+        }
+        const ts = Date.parse(pattern.last_seen);
+        if (Number.isNaN(ts) || now - ts > recentThresholdMs) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    const multiplier = sortDirection === "asc" ? 1 : -1;
+    filtered.sort((a, b) => {
+      if (sortBy === "confidence") {
+        return (a.confidence - b.confidence) * multiplier;
+      }
+      if (sortBy === "accuracy") {
+        return (a.accuracy - b.accuracy) * multiplier;
+      }
+      if (sortBy === "occurrences") {
+        return (a.occurrences - b.occurrences) * multiplier;
+      }
+      if (sortBy === "recent") {
+        const aTs = a.last_seen ? Date.parse(a.last_seen) : 0;
+        const bTs = b.last_seen ? Date.parse(b.last_seen) : 0;
+        return (aTs - bTs) * multiplier;
+      }
+      return (a.global_score - b.global_score) * multiplier;
+    });
+
+    return filtered;
+  }, [
+    filterActive,
+    filterElite,
+    filterHighConfidence,
+    filterRecent,
+    patternRanking.ranked_patterns,
+    sortBy,
+    sortDirection,
+  ]);
+
+  const rankingTop10 = useMemo(() => {
+    return [...patternRanking.ranked_patterns]
+      .sort((a, b) => b.global_score - a.global_score)
+      .slice(0, 10);
+  }, [patternRanking.ranked_patterns]);
+
+  const topConfidence = useMemo(
+    () => Math.max(0, ...patternRanking.ranked_patterns.map((pattern) => pattern.confidence)),
+    [patternRanking.ranked_patterns]
+  );
+
+  const topAccuracy = useMemo(
+    () => Math.max(0, ...patternRanking.ranked_patterns.map((pattern) => pattern.accuracy)),
+    [patternRanking.ranked_patterns]
+  );
+
+  const topStable = useMemo(
+    () => Math.max(0, ...patternRanking.ranked_patterns.map((pattern) => pattern.stability_score)),
+    [patternRanking.ranked_patterns]
+  );
+
+  const topRecent = useMemo(() => {
+    const latest = [...patternRanking.ranked_patterns]
+      .filter((pattern) => !!pattern.last_seen)
+      .sort(
+        (a, b) =>
+          Date.parse(b.last_seen ?? "1970-01-01T00:00:00.000Z") -
+          Date.parse(a.last_seen ?? "1970-01-01T00:00:00.000Z")
+      )[0];
+
+    return latest?.last_seen ? formatClock(new Date(latest.last_seen)) : "-";
+  }, [patternRanking.ranked_patterns]);
 
   return (
     <main className="dashboard">
@@ -668,6 +792,86 @@ function App() {
                 ) : (
                   <tr>
                     <td colSpan={5}>Nenhum padrao descoberto ainda.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+        <Panel title="Pattern Ranking" subtitle="classificacao automatica de padroes">
+          <div className="learning-metrics">
+            <p><strong>Top 10 Patterns:</strong> {rankingTop10.length}</p>
+            <p><strong>Top Confidence:</strong> {topConfidence}%</p>
+            <p><strong>Top Accuracy:</strong> {topAccuracy}%</p>
+            <p><strong>Top Stable:</strong> {topStable}%</p>
+            <p><strong>Top Recent:</strong> {topRecent}</p>
+          </div>
+          <ol className="top-patterns">
+            {rankingTop10.map((pattern) => (
+              <li key={`top-${pattern.id}`}>
+                {pattern.pattern} ({pattern.rank})
+              </li>
+            ))}
+          </ol>
+
+          <div className="filters-row">
+            <label><input type="checkbox" checked={filterElite} onChange={(e) => setFilterElite(e.target.checked)} /> Mostrar apenas Elite</label>
+            <label><input type="checkbox" checked={filterHighConfidence} onChange={(e) => setFilterHighConfidence(e.target.checked)} /> Mostrar apenas Alta Confianca</label>
+            <label><input type="checkbox" checked={filterActive} onChange={(e) => setFilterActive(e.target.checked)} /> Mostrar apenas Ativos</label>
+            <label><input type="checkbox" checked={filterRecent} onChange={(e) => setFilterRecent(e.target.checked)} /> Mostrar apenas Recentes</label>
+          </div>
+
+          <div className="action-row">
+            <label className="provider-select">
+              Ordenar por
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as "score" | "confidence" | "accuracy" | "occurrences" | "recent") }>
+                <option value="score">Score</option>
+                <option value="confidence">Confidence</option>
+                <option value="accuracy">Accuracy</option>
+                <option value="occurrences">Occurrences</option>
+                <option value="recent">Last Seen</option>
+              </select>
+            </label>
+            <label className="provider-select">
+              Direcao
+              <select value={sortDirection} onChange={(e) => setSortDirection(e.target.value as "asc" | "desc") }>
+                <option value="desc">Desc</option>
+                <option value="asc">Asc</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="pattern-table-wrapper">
+            <table className="pattern-table">
+              <thead>
+                <tr>
+                  <th>Pattern</th>
+                  <th>Rank</th>
+                  <th>Score</th>
+                  <th>Confidence</th>
+                  <th>Accuracy</th>
+                  <th>Occurrences</th>
+                  <th>Last Seen</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rankedPatterns.length ? (
+                  rankedPatterns.map((pattern) => (
+                    <tr key={pattern.id}>
+                      <td>{pattern.pattern}</td>
+                      <td>{pattern.rank}</td>
+                      <td>{pattern.global_score}</td>
+                      <td>{pattern.confidence}%</td>
+                      <td>{pattern.accuracy}%</td>
+                      <td>{pattern.occurrences}</td>
+                      <td>{pattern.last_seen ? formatClock(new Date(pattern.last_seen)) : "-"}</td>
+                      <td>{pattern.status}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={8}>Nenhum padrao ranqueado ainda.</td>
                   </tr>
                 )}
               </tbody>
