@@ -6,6 +6,11 @@ import { Panel } from "./components/Panel";
 import { StatusBadge } from "./components/StatusBadge";
 import { LearningEngine } from "./services/learning/learningEngine";
 import { LearningSnapshot } from "./services/learning/types";
+import { PatternDiscoveryEngine } from "./services/pattern-discovery/patternDiscoveryEngine";
+import {
+  DiscoveredPattern,
+  PatternDiscoveryResult,
+} from "./services/pattern-discovery/types";
 import { liveDataService } from "./services/live-data/liveDataService";
 import { storageService } from "./services/storage/storageService";
 import { PersistentStorageInfo } from "./services/storage/types";
@@ -104,6 +109,26 @@ function createEmptyStorageInfo(): PersistentStorageInfo {
   };
 }
 
+function createEmptyPatternDiscovery(): PatternDiscoveryResult {
+  return {
+    scanned_at: new Date(0).toISOString(),
+    summary: {
+      total_patterns: 0,
+      new_patterns: 0,
+      high_confidence: 0,
+      discarded_patterns: 0,
+      discovery_progress: 0,
+    },
+    patterns: [],
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 function App() {
   const [health, setHealth] = useState<LaboratoryHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
@@ -127,12 +152,19 @@ function App() {
   const [learning, setLearning] = useState<LearningSnapshot>(createEmptyLearning);
   const [storageInfo, setStorageInfo] = useState<PersistentStorageInfo>(createEmptyStorageInfo);
   const [storageMessage, setStorageMessage] = useState<string | null>(null);
+  const [patternDiscovery, setPatternDiscovery] = useState<PatternDiscoveryResult>(
+    createEmptyPatternDiscovery
+  );
+  const [isScanningPatterns, setIsScanningPatterns] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
 
   const debounceTimerRef = useRef<number | null>(null);
   const isAnalyzingRef = useRef(false);
   const pendingAutoAnalyzeRef = useRef(false);
   const lastAnalysisSignatureRef = useRef<string>("");
   const learningEngineRef = useRef(new LearningEngine());
+  const patternDiscoveryEngineRef = useRef(new PatternDiscoveryEngine());
     const refreshStorageInfo = useCallback(() => {
       setStorageInfo(storageService.getStorageInfo(true));
     }, []);
@@ -162,6 +194,9 @@ function App() {
       lastIngestedIndexRef.current = 0;
       setLearning(createEmptyLearning());
       setStorageMessage("Memoria persistente removida");
+      setPatternDiscovery(createEmptyPatternDiscovery());
+      setScanProgress(0);
+      setScanMessage(null);
       refreshStorageInfo();
     }, [refreshStorageInfo]);
 
@@ -263,6 +298,12 @@ function App() {
       lastIngestedIndexRef.current = 0;
       setStorageMessage("Memoria carregada automaticamente");
     }
+
+    const storedDiscovery = storageService.loadPatternDiscoveryResult();
+    if (storedDiscovery) {
+      setPatternDiscovery(storedDiscovery);
+    }
+
     refreshStorageInfo();
 
     const unsubscribe = liveDataService.subscribe((events) => {
@@ -339,6 +380,43 @@ function App() {
 
   async function handleAnalyze() {
     await executeAnalysis("manual");
+  }
+
+  async function handleScanHistory() {
+    if (isScanningPatterns) {
+      return;
+    }
+
+    const state = learningEngineRef.current.exportState();
+    const previousPatterns: DiscoveredPattern[] = patternDiscovery.patterns;
+
+    setIsScanningPatterns(true);
+    setScanMessage("Escaneando historico...");
+    setScanProgress(5);
+
+    try {
+      await delay(80);
+      setScanProgress(20);
+      await delay(80);
+      setScanProgress(45);
+
+      const result = patternDiscoveryEngineRef.current.scan(state, previousPatterns);
+
+      await delay(80);
+      setScanProgress(75);
+      storageService.savePatternDiscoveryResult(result);
+      refreshStorageInfo();
+
+      await delay(80);
+      setPatternDiscovery(result);
+      setScanProgress(100);
+      setScanMessage(`Scan concluido as ${formatClock(new Date())}`);
+    } catch {
+      setScanMessage("Falha ao escanear historico");
+      setScanProgress(0);
+    } finally {
+      setIsScanningPatterns(false);
+    }
   }
 
   return (
@@ -538,6 +616,63 @@ function App() {
           </div>
           {storageMessage ? <p className="status-label">{storageMessage}</p> : null}
           <JsonViewer data={storageInfo} />
+        </Panel>
+        <Panel title="Pattern Discovery" subtitle="descoberta automatica de padroes">
+          <div className="learning-metrics">
+            <p><strong>Total Patterns:</strong> {patternDiscovery.summary.total_patterns}</p>
+            <p><strong>New Patterns:</strong> {patternDiscovery.summary.new_patterns}</p>
+            <p><strong>High Confidence:</strong> {patternDiscovery.summary.high_confidence}</p>
+            <p><strong>Discarded Patterns:</strong> {patternDiscovery.summary.discarded_patterns}</p>
+            <p><strong>Discovery Progress:</strong> {scanProgress}%</p>
+          </div>
+
+          <div className="action-row">
+            <button
+              className="analyze-button"
+              type="button"
+              onClick={handleScanHistory}
+              disabled={isScanningPatterns || learning.samples === 0}
+            >
+              {isScanningPatterns ? "Scanning..." : "Scan History"}
+            </button>
+            {isScanningPatterns ? <span className="spinner" aria-label="Scanning" /> : null}
+          </div>
+
+          <div className="progress-track" role="progressbar" aria-valuenow={scanProgress}>
+            <div className="progress-fill" style={{ width: `${scanProgress}%` }} />
+          </div>
+          {scanMessage ? <p className="status-label">{scanMessage}</p> : null}
+
+          <div className="pattern-table-wrapper">
+            <table className="pattern-table">
+              <thead>
+                <tr>
+                  <th>Pattern</th>
+                  <th>Occurrences</th>
+                  <th>Confidence</th>
+                  <th>Accuracy</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {patternDiscovery.patterns.length ? (
+                  patternDiscovery.patterns.map((pattern) => (
+                    <tr key={pattern.id}>
+                      <td>{pattern.pattern}</td>
+                      <td>{pattern.occurrences}</td>
+                      <td>{pattern.confidence}%</td>
+                      <td>{pattern.accuracy}%</td>
+                      <td>{pattern.status}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5}>Nenhum padrao descoberto ainda.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </Panel>
       </section>
     </main>
