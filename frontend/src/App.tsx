@@ -215,6 +215,37 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+function formatMetric(value: unknown, fallback = "-"): string {
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  if (typeof value === "boolean") {
+    return value ? "yes" : "no";
+  }
+  return fallback;
+}
+
+function pickMetric(
+  record: Record<string, unknown> | null | undefined,
+  keys: string[],
+  fallback = "-"
+): string {
+  if (!record) {
+    return fallback;
+  }
+
+  for (const key of keys) {
+    if (key in record) {
+      return formatMetric(record[key], fallback);
+    }
+  }
+
+  return fallback;
+}
+
 function App() {
   const [health, setHealth] = useState<LaboratoryHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
@@ -267,6 +298,7 @@ function App() {
     "score" | "confidence" | "accuracy" | "occurrences" | "recent"
   >("score");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [currentTime, setCurrentTime] = useState(() => new Date());
 
   const debounceTimerRef = useRef<number | null>(null);
   const isAnalyzingRef = useRef(false);
@@ -388,6 +420,16 @@ function App() {
   useEffect(() => {
     performanceAnalyticsRef.current = performanceAnalytics;
   }, [performanceAnalytics]);
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, []);
 
   const runPerformanceAnalytics = useCallback(
     (nextStrategy?: StrategyResult, nextStrategyHistory?: StrategyDecision[]) => {
@@ -867,628 +909,496 @@ function App() {
     ? (performanceAnalytics.win_loss_chart.losses / winLossTotal) * 100
     : 0;
 
-  return (
-    <main className="dashboard">
-      <header className="dashboard-header">
-        <div>
-          <h1 className="dashboard-title">Double Evolution IA Laboratory</h1>
-          <p className="dashboard-subtitle">
-            Dashboard operacional para inspeção completa do DecisionPipeline
-          </p>
-        </div>
-        <StatusBadge
-          status={healthState === "success" ? health?.status ?? "online" : requestStateLabel(healthState)}
-        />
-      </header>
+  const navItems = [
+    "Dashboard",
+    "Live",
+    "IA",
+    "Estrategias",
+    "Simulacao",
+    "Backtest",
+    "Historico",
+    "Estatisticas",
+    "Laboratorio",
+    "Configuracoes",
+    "Conta",
+  ];
 
-      <section className="actions">
-        <Panel
-          title="Area de Historico"
-          subtitle="Fluxo em tempo real via LiveDataService (Mock Provider)"
-        >
-          {liveEvents.length ? (
-            <JsonViewer data={liveEvents.slice(-12)} />
-          ) : (
-            <p className="empty-state">Sem eventos recebidos do stream no momento.</p>
-          )}
-          <div className="action-row">
-            <label className="provider-select">
-              Fonte de dados
-              <select
-                value={providerName}
-                onChange={(event) =>
-                  handleProviderChange(event.target.value as LiveDataProviderName)
-                }
-              >
-                {availableProviders.map((name) => (
-                  <option key={name} value={name}>
-                    {name.toUpperCase()}
-                  </option>
+  const headerAccuracy = `${performanceAnalytics.overall_accuracy.toFixed(1)}%`;
+  const headerConfidence = `${performanceAnalytics.average_confidence.toFixed(1)}%`;
+  const headerStatus =
+    healthState === "success" ? health?.status ?? "online" : requestStateLabel(healthState);
+
+  const aiCards = [
+    { label: "Decision", value: strategyResult.best_strategy },
+    { label: "Confidence", value: headerConfidence },
+    { label: "Trend", value: pickMetric(analysis?.trend, ["direction", "trend", "status"]) },
+    {
+      label: "Probability",
+      value: pickMetric(analysis?.probability, ["probability", "chance", "score"]),
+    },
+    { label: "Consensus", value: pickMetric(analysis?.consensus, ["decision", "status", "signal"]) },
+    {
+      label: "Correlation",
+      value: pickMetric(analysis?.correlation, ["correlation", "strength", "pair"]),
+    },
+    { label: "Learning", value: String(learning.learning_score) },
+    { label: "Risk", value: `${performanceAnalytics.average_risk.toFixed(1)}%` },
+    {
+      label: "Seasonality",
+      value: pickMetric(analysis?.seasonality, ["phase", "seasonality", "status"]),
+    },
+    { label: "Accuracy", value: headerAccuracy },
+  ];
+
+  return (
+    <main className="pro-dashboard">
+      <aside className="sidebar">
+        <div className="brand-mini">DE</div>
+        <div className="sidebar-title">Double Evolution IA</div>
+        <nav className="sidebar-nav" aria-label="Main navigation">
+          {navItems.map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={`nav-item ${item === "Dashboard" ? "nav-item-active" : ""}`}
+            >
+              <span className="nav-icon" aria-hidden="true">
+                {item.slice(0, 2).toUpperCase()}
+              </span>
+              <span>{item}</span>
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <section className="workspace">
+        <header className="top-header">
+          <div className="top-header-brand">
+            <h1>Double Evolution IA</h1>
+            <p>Professional Data Intelligence Dashboard</p>
+          </div>
+          <div className="header-metrics">
+            <article className="header-chip">
+              <span>Status Online</span>
+              <StatusBadge status={headerStatus} />
+            </article>
+            <article className="header-chip">
+              <span>Provider ativo</span>
+              <strong>{providerName.toUpperCase()}</strong>
+            </article>
+            <article className="header-chip">
+              <span>Horario</span>
+              <strong>{formatClock(currentTime)}</strong>
+            </article>
+            <article className="header-chip">
+              <span>Eventos</span>
+              <strong>{liveEvents.length}</strong>
+            </article>
+            <article className="header-chip">
+              <span>Accuracy Geral</span>
+              <strong>{headerAccuracy}</strong>
+            </article>
+            <article className="header-chip">
+              <span>Confidence Geral</span>
+              <strong>{headerConfidence}</strong>
+            </article>
+          </div>
+        </header>
+
+        <section className="center-zone">
+          <Panel title="Painel das Pedras" subtitle="Layout preparado para stream, grade, timeline, zoom e filtros">
+            <div className="stones-last-results">
+              {liveEvents.slice(-24).map((event) => (
+                <span
+                  key={`${event.timestamp}-${event.number}`}
+                  className={`stone-pill stone-${event.color}`}
+                  title={`${event.color} #${event.number}`}
+                >
+                  {event.number}
+                </span>
+              ))}
+              {!liveEvents.length ? (
+                <p className="empty-state">Sem eventos ainda para a linha de ultimos resultados.</p>
+              ) : null}
+            </div>
+
+            <div className="stones-viewport horizontal-scroll">
+              <div className="stones-grid">
+                {Array.from({ length: 96 }, (_, index) => (
+                  <div className="stone-cell" key={`stone-cell-${index}`}>
+                    <span>{index + 1}</span>
+                  </div>
                 ))}
-              </select>
-            </label>
-            <button
-              className="analyze-button"
-              type="button"
-              onClick={handleConnectLiveData}
-              disabled={liveConnected}
-            >
-              Conectar
-            </button>
-            <button
-              className="analyze-button"
-              type="button"
-              onClick={handleDisconnectLiveData}
-              disabled={!liveConnected}
-            >
-              Desconectar
-            </button>
-            <button
-              className="analyze-button"
-              type="button"
-              onClick={handleAnalyze}
-              disabled={isAnalyzing || !liveEvents.length}
-            >
-              {isAnalyzing ? "Analisando..." : "Analisar"}
-            </button>
-            {providerName === "manual" ? (
-              <button
-                className="analyze-button"
-                type="button"
-                onClick={pushManualEvent}
-                disabled={!liveConnected}
-              >
-                Inserir evento manual
-              </button>
-            ) : null}
-            {providerName === "simulator" ? (
-              <>
+              </div>
+            </div>
+
+            <div className="stones-workbench">
+              <div className="bench-card vertical-scroll">
+                <h4>Timeline</h4>
+                <p>Area reservada para timeline interativa com scroll vertical.</p>
+              </div>
+              <div className="bench-card">
+                <h4>Zoom</h4>
+                <p>Area reservada para controles de zoom e navegacao.</p>
+              </div>
+              <div className="bench-card">
+                <h4>Filtros</h4>
+                <p>Area reservada para filtros de periodo, cor e padroes.</p>
+              </div>
+              <div className="bench-card">
+                <h4>Heatmap</h4>
+                <p>Area reservada para mapa de calor da grade de pedras.</p>
+              </div>
+            </div>
+          </Panel>
+
+          <div className="ia-column">
+            <Panel title="Painel da IA" subtitle="Cards de decisao e inteligencia em tempo real">
+              <div className="ia-cards-grid">
+                {aiCards.map((card) => (
+                  <article className="ia-card" key={card.label}>
+                    <span>{card.label}</span>
+                    <strong>{card.value}</strong>
+                  </article>
+                ))}
+              </div>
+
+              <div className="status-line">
+                <p className="status-label">Estado da analise</p>
+                <StatusBadge status={requestStateLabel(analysisState)} />
+              </div>
+              <div className="status-line">
+                <p className="status-label">Estado do stream</p>
+                <StatusBadge status={liveConnected ? "online" : "offline"} />
+              </div>
+
+              {analysisError ? <p className="error-text">{analysisError}</p> : null}
+            </Panel>
+
+            <Panel title="Controle Operacional" subtitle="Sem novas funcionalidades, apenas comandos existentes">
+              <div className="action-row">
                 <label className="provider-select">
-                  Velocidade
+                  Fonte de dados
                   <select
-                    value={simulatorSpeed}
+                    value={providerName}
                     onChange={(event) =>
-                      handleSimulatorSpeedChange(event.target.value as SimulatorSpeed)
+                      handleProviderChange(event.target.value as LiveDataProviderName)
                     }
                   >
-                    <option value="lento">lento</option>
-                    <option value="normal">normal</option>
-                    <option value="rapido">rapido</option>
+                    {availableProviders.map((name) => (
+                      <option key={name} value={name}>
+                        {name.toUpperCase()}
+                      </option>
+                    ))}
                   </select>
                 </label>
+
                 <button
                   className="analyze-button"
                   type="button"
-                  onClick={handleSimulatorStart}
+                  onClick={handleConnectLiveData}
+                  disabled={liveConnected}
                 >
-                  Iniciar simulacao
+                  Conectar
                 </button>
                 <button
                   className="analyze-button"
                   type="button"
-                  onClick={handleSimulatorPause}
+                  onClick={handleDisconnectLiveData}
+                  disabled={!liveConnected}
                 >
-                  Pausar simulacao
+                  Desconectar
                 </button>
                 <button
                   className="analyze-button"
                   type="button"
-                  onClick={handleSimulatorReset}
+                  onClick={handleAnalyze}
+                  disabled={isAnalyzing || !liveEvents.length}
                 >
-                  Resetar simulacao
+                  {isAnalyzing ? "Analisando..." : "Analisar"}
                 </button>
-              </>
-            ) : null}
-            <span>{liveEvents.length} eventos detectados</span>
-            {isAnalyzing ? <span className="spinner" aria-label="Analisando" /> : null}
-          </div>
-          <p className="auto-indicator">
-            ● {isAnalyzing ? "Analisando..." : lastAnalyzedAt ? `Ultima analise as ${formatClock(lastAnalyzedAt)}` : "Idle"}
-          </p>
-          <div className="status-line">
-            <p className="status-label">Estado do stream</p>
-            <StatusBadge status={liveConnected ? "online" : "offline"} />
-          </div>
-          <div className="status-line">
-            <p className="status-label">Provider ativo</p>
-            <StatusBadge status={providerName} />
-          </div>
-          <div className="status-line">
-            <p className="status-label">Estado da analise</p>
-            <StatusBadge status={requestStateLabel(analysisState)} />
-          </div>
-          {analysisError ? <p className="error-text">{analysisError}</p> : null}
-        </Panel>
+                {isAnalyzing ? <span className="spinner" aria-label="Analisando" /> : null}
 
-        <Panel title="Status da IA" subtitle="Consome GET /api/v1/laboratory/health">
-          <div className="action-row">
-            <button
-              className="analyze-button"
-              type="button"
-              onClick={handleCheckHealth}
-              disabled={isCheckingHealth}
-            >
-              {isCheckingHealth ? "Consultando..." : "Atualizar status"}
-            </button>
-            <StatusBadge
-              status={healthState === "success" ? health?.status ?? "online" : requestStateLabel(healthState)}
-            />
-          </div>
-          <div className="status-line">
-            <p className="status-label">Estado do health-check</p>
-            <StatusBadge status={requestStateLabel(healthState)} />
-          </div>
-          {health ? <JsonViewer data={health} /> : <p className="empty-state">Sem status consultado.</p>}
-          {healthError ? <p className="error-text">{healthError}</p> : null}
-        </Panel>
-      </section>
+                {providerName === "manual" ? (
+                  <button
+                    className="analyze-button"
+                    type="button"
+                    onClick={pushManualEvent}
+                    disabled={!liveConnected}
+                  >
+                    Inserir evento manual
+                  </button>
+                ) : null}
 
-      <section className="panel-grid">
-        <Panel title="Painel de Estatisticas" subtitle="statistics">
-          {analysis ? <JsonViewer data={analysis.statistics} /> : <p className="empty-state">Execute uma analise para exibir dados.</p>}
-        </Panel>
-        <Panel title="Painel de Padroes" subtitle="patterns">
-          {analysis ? <JsonViewer data={analysis.patterns} /> : <p className="empty-state">Sem dados de padroes.</p>}
-        </Panel>
-        <Panel title="Painel de Regime" subtitle="regime">
-          {analysis ? <JsonViewer data={analysis.regime} /> : <p className="empty-state">Sem dados de regime.</p>}
-        </Panel>
-        <Panel title="Painel de Tendencia" subtitle="trend">
-          {analysis ? <JsonViewer data={analysis.trend} /> : <p className="empty-state">Sem dados de tendencia.</p>}
-        </Panel>
-        <Panel title="Painel de Sazonalidade" subtitle="seasonality">
-          {analysis ? <JsonViewer data={analysis.seasonality} /> : <p className="empty-state">Sem dados de sazonalidade.</p>}
-        </Panel>
-        <Panel title="Painel de Correlacao" subtitle="correlation">
-          {analysis ? <JsonViewer data={analysis.correlation} /> : <p className="empty-state">Sem dados de correlacao.</p>}
-        </Panel>
-        <Panel title="Painel de Probabilidade" subtitle="probability">
-          {analysis ? <JsonViewer data={analysis.probability} /> : <p className="empty-state">Sem dados de probabilidade.</p>}
-        </Panel>
-        <Panel title="Painel de Risco" subtitle="risk">
-          {analysis ? <JsonViewer data={analysis.risk} /> : <p className="empty-state">Sem dados de risco.</p>}
-        </Panel>
-        <Panel title="Painel de Consenso" subtitle="consensus">
-          {analysis ? <JsonViewer data={analysis.consensus} /> : <p className="empty-state">Sem dados de consenso.</p>}
-        </Panel>
-        <Panel title="Painel de Confianca" subtitle="confidence">
-          {analysis ? <JsonViewer data={analysis.confidence} /> : <p className="empty-state">Sem dados de confianca.</p>}
-        </Panel>
-        <Panel title="Painel de Sinal" subtitle="signal">
-          {analysis ? <JsonViewer data={analysis.signal} /> : <p className="empty-state">Sem dados de sinal.</p>}
-        </Panel>
-        <Panel title="Painel de Explicacao" subtitle="explanation">
-          {analysis ? <JsonViewer data={analysis.explanation} /> : <p className="empty-state">Sem dados de explicacao.</p>}
-        </Panel>
-        <Panel title="Learning" subtitle="aprendizado continuo do stream">
-          <div className="learning-metrics">
-            <p><strong>Learning Score:</strong> {learning.learning_score}</p>
-            <p><strong>Accuracy:</strong> {learning.accuracy}%</p>
-            <p><strong>Samples:</strong> {learning.samples}</p>
-            <p><strong>Memory Size:</strong> {Object.keys(learning.pattern_memory).length}</p>
-            <p><strong>Adaptation:</strong> {learning.adaptation_level}</p>
-            <p><strong>Stability:</strong> {learning.stability}</p>
-          </div>
-          <JsonViewer
-            data={{
-              learning_score: learning.learning_score,
-              samples: learning.samples,
-              accuracy: learning.accuracy,
-              adaptation_level: learning.adaptation_level,
-              stability: learning.stability,
-              pattern_memory: learning.pattern_memory,
-              trend_memory: learning.trend_memory,
-            }}
-          />
-        </Panel>
-        <Panel title="Persistent Storage" subtitle="memoria local do LearningEngine">
-          <div className="learning-metrics">
-            <p><strong>Storage Status:</strong> {storageInfo.status}</p>
-            <p>
-              <strong>Last Save:</strong>{" "}
-              {storageInfo.last_save ? formatClock(new Date(storageInfo.last_save)) : "-"}
-            </p>
-            <p><strong>Total Records:</strong> {storageInfo.total_records}</p>
-            <p><strong>Memory Usage:</strong> {storageInfo.memory_usage} bytes</p>
-            <p><strong>Auto Save:</strong> {storageInfo.auto_save ? "on" : "off"}</p>
-          </div>
-          <div className="action-row">
-            <button className="analyze-button" type="button" onClick={saveLearningNow}>
-              Salvar Agora
-            </button>
-            <button className="analyze-button" type="button" onClick={clearLearningMemory}>
-              Limpar Memoria
-            </button>
-          </div>
-          {storageMessage ? <p className="status-label">{storageMessage}</p> : null}
-          <JsonViewer data={storageInfo} />
-        </Panel>
-        <Panel title="Pattern Discovery" subtitle="descoberta automatica de padroes">
-          <div className="learning-metrics">
-            <p><strong>Total Patterns:</strong> {patternDiscovery.summary.total_patterns}</p>
-            <p><strong>New Patterns:</strong> {patternDiscovery.summary.new_patterns}</p>
-            <p><strong>High Confidence:</strong> {patternDiscovery.summary.high_confidence}</p>
-            <p><strong>Discarded Patterns:</strong> {patternDiscovery.summary.discarded_patterns}</p>
-            <p><strong>Discovery Progress:</strong> {scanProgress}%</p>
-          </div>
-
-          <div className="action-row">
-            <button
-              className="analyze-button"
-              type="button"
-              onClick={handleScanHistory}
-              disabled={isScanningPatterns || learning.samples === 0}
-            >
-              {isScanningPatterns ? "Scanning..." : "Scan History"}
-            </button>
-            {isScanningPatterns ? <span className="spinner" aria-label="Scanning" /> : null}
-          </div>
-
-          <div className="progress-track" role="progressbar" aria-valuenow={scanProgress}>
-            <div className="progress-fill" style={{ width: `${scanProgress}%` }} />
-          </div>
-          {scanMessage ? <p className="status-label">{scanMessage}</p> : null}
-
-          <div className="pattern-table-wrapper">
-            <table className="pattern-table">
-              <thead>
-                <tr>
-                  <th>Pattern</th>
-                  <th>Occurrences</th>
-                  <th>Confidence</th>
-                  <th>Accuracy</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {patternDiscovery.patterns.length ? (
-                  patternDiscovery.patterns.map((pattern) => (
-                    <tr key={pattern.id}>
-                      <td>{pattern.pattern}</td>
-                      <td>{pattern.occurrences}</td>
-                      <td>{pattern.confidence}%</td>
-                      <td>{pattern.accuracy}%</td>
-                      <td>{pattern.status}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5}>Nenhum padrao descoberto ainda.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-        <Panel title="Pattern Ranking" subtitle="classificacao automatica de padroes">
-          <div className="learning-metrics">
-            <p><strong>Top 10 Patterns:</strong> {rankingTop10.length}</p>
-            <p><strong>Top Confidence:</strong> {topConfidence}%</p>
-            <p><strong>Top Accuracy:</strong> {topAccuracy}%</p>
-            <p><strong>Top Stable:</strong> {topStable}%</p>
-            <p><strong>Top Recent:</strong> {topRecent}</p>
-          </div>
-          <ol className="top-patterns">
-            {rankingTop10.map((pattern) => (
-              <li key={`top-${pattern.id}`}>
-                {pattern.pattern} ({pattern.rank})
-              </li>
-            ))}
-          </ol>
-
-          <div className="filters-row">
-            <label><input type="checkbox" checked={filterElite} onChange={(e) => setFilterElite(e.target.checked)} /> Mostrar apenas Elite</label>
-            <label><input type="checkbox" checked={filterHighConfidence} onChange={(e) => setFilterHighConfidence(e.target.checked)} /> Mostrar apenas Alta Confianca</label>
-            <label><input type="checkbox" checked={filterActive} onChange={(e) => setFilterActive(e.target.checked)} /> Mostrar apenas Ativos</label>
-            <label><input type="checkbox" checked={filterRecent} onChange={(e) => setFilterRecent(e.target.checked)} /> Mostrar apenas Recentes</label>
-          </div>
-
-          <div className="action-row">
-            <label className="provider-select">
-              Ordenar por
-              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as "score" | "confidence" | "accuracy" | "occurrences" | "recent") }>
-                <option value="score">Score</option>
-                <option value="confidence">Confidence</option>
-                <option value="accuracy">Accuracy</option>
-                <option value="occurrences">Occurrences</option>
-                <option value="recent">Last Seen</option>
-              </select>
-            </label>
-            <label className="provider-select">
-              Direcao
-              <select value={sortDirection} onChange={(e) => setSortDirection(e.target.value as "asc" | "desc") }>
-                <option value="desc">Desc</option>
-                <option value="asc">Asc</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="pattern-table-wrapper">
-            <table className="pattern-table">
-              <thead>
-                <tr>
-                  <th>Pattern</th>
-                  <th>Rank</th>
-                  <th>Score</th>
-                  <th>Confidence</th>
-                  <th>Accuracy</th>
-                  <th>Occurrences</th>
-                  <th>Last Seen</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rankedPatterns.length ? (
-                  rankedPatterns.map((pattern) => (
-                    <tr key={pattern.id}>
-                      <td>{pattern.pattern}</td>
-                      <td>{pattern.rank}</td>
-                      <td>{pattern.global_score}</td>
-                      <td>{pattern.confidence}%</td>
-                      <td>{pattern.accuracy}%</td>
-                      <td>{pattern.occurrences}</td>
-                      <td>{pattern.last_seen ? formatClock(new Date(pattern.last_seen)) : "-"}</td>
-                      <td>{pattern.status}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={8}>Nenhum padrao ranqueado ainda.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-
-        <Panel title="Strategy Center" subtitle="selecao automatica de estrategia em tempo real">
-          <div className="learning-metrics">
-            <p><strong>Current Strategy:</strong> {strategyResult.best_strategy}</p>
-            <p><strong>Strategy Score:</strong> {strategyResult.strategy_score}</p>
-            <p><strong>Expected Win Rate:</strong> {strategyResult.expected_win_rate}%</p>
-            <p><strong>Expected Risk:</strong> {strategyResult.expected_risk}%</p>
-            <p><strong>Confidence:</strong> {strategyResult.confidence}%</p>
-            <p><strong>Expected Delay:</strong> {strategyResult.expected_delay}s</p>
-            <p><strong>Mode:</strong> {strategyMode.toUpperCase()}</p>
-          </div>
-
-          <div className="action-row">
-            <button className="analyze-button" type="button" onClick={handleAutoStrategy}>
-              Auto Strategy
-            </button>
-            <button className="analyze-button" type="button" onClick={handleManualStrategy}>
-              Manual Strategy
-            </button>
-            <label className="provider-select">
-              Estrategia manual
-              <select
-                value={manualStrategy}
-                onChange={(event) =>
-                  setManualStrategy(
-                    event.target.value as
-                      | "Conservative"
-                      | "Balanced"
-                      | "Aggressive"
-                      | "Adaptive"
-                      | "Experimental"
-                  )
-                }
-              >
-                <option value="Conservative">Conservative</option>
-                <option value="Balanced">Balanced</option>
-                <option value="Aggressive">Aggressive</option>
-                <option value="Adaptive">Adaptive</option>
-                <option value="Experimental">Experimental</option>
-              </select>
-            </label>
-            <button
-              className="analyze-button"
-              type="button"
-              onClick={() => runStrategySelection(strategyMode, manualStrategy)}
-              disabled={!patternRanking.ranked_patterns.length && !patternDiscovery.patterns.length}
-            >
-              Atualizar estrategia
-            </button>
-          </div>
-
-          <div className="status-line">
-            <p className="status-label"><strong>Recommendation:</strong> {strategyResult.recommendation}</p>
-          </div>
-          <p className="status-label"><strong>Reason:</strong> {strategyResult.reason}</p>
-
-          <div className="pattern-table-wrapper">
-            <table className="pattern-table">
-              <thead>
-                <tr>
-                  <th>Strategy</th>
-                  <th>Score</th>
-                </tr>
-              </thead>
-              <tbody>
-                {strategyResult.strategy_scores.length ? (
-                  strategyResult.strategy_scores.map((row) => (
-                    <tr key={`strategy-score-${row.strategy}`}>
-                      <td>{row.strategy}</td>
-                      <td>{row.score}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={2}>Sem scores de estrategia ainda.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <h4 className="status-label">Historico de estrategias</h4>
-          <div className="pattern-table-wrapper">
-            <table className="pattern-table">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Mode</th>
-                  <th>Strategy</th>
-                  <th>Score</th>
-                  <th>Win Rate</th>
-                  <th>Risk</th>
-                  <th>Confidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {strategyHistory.length ? (
-                  strategyHistory.map((item, index) => (
-                    <tr key={`strategy-history-${item.selected_at}-${index}`}>
-                      <td>{formatClock(new Date(item.selected_at))}</td>
-                      <td>{item.mode}</td>
-                      <td>{item.strategy}</td>
-                      <td>{item.strategy_score}</td>
-                      <td>{item.expected_win_rate}%</td>
-                      <td>{item.expected_risk}%</td>
-                      <td>{item.confidence}%</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={7}>Nenhuma estrategia selecionada ainda.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-
-        <Panel title="Performance Analytics" subtitle="monitoramento continuo do desempenho real da IA">
-          <div className="learning-metrics">
-            <p><strong>Overall Accuracy:</strong> {performanceAnalytics.overall_accuracy}%</p>
-            <p><strong>Today's Accuracy:</strong> {performanceAnalytics.todays_accuracy}%</p>
-            <p><strong>Last 100 Predictions:</strong> {performanceAnalytics.last_100_predictions}</p>
-            <p><strong>Win Rate:</strong> {performanceAnalytics.win_rate}%</p>
-            <p><strong>Loss Rate:</strong> {performanceAnalytics.loss_rate}%</p>
-            <p><strong>Average Confidence:</strong> {performanceAnalytics.average_confidence}%</p>
-            <p><strong>Average Risk:</strong> {performanceAnalytics.average_risk}%</p>
-            <p><strong>Prediction Accuracy:</strong> {performanceAnalytics.prediction_accuracy}%</p>
-            <p><strong>Strategy Accuracy:</strong> {performanceAnalytics.strategy_accuracy}%</p>
-            <p><strong>Pattern Accuracy:</strong> {performanceAnalytics.pattern_accuracy}%</p>
-            <p><strong>Learning Evolution:</strong> {performanceAnalytics.learning_evolution}%</p>
-            <p><strong>Best Strategy:</strong> {performanceAnalytics.best_strategy}</p>
-            <p><strong>Worst Strategy:</strong> {performanceAnalytics.worst_strategy}</p>
-            <p><strong>Best Pattern:</strong> {performanceAnalytics.best_pattern}</p>
-            <p><strong>Worst Pattern:</strong> {performanceAnalytics.worst_pattern}</p>
-          </div>
-
-          <div className="chart-grid">
-            <div className="chart-card">
-              <h4 className="status-label">Win/Loss Chart</h4>
-              <div className="stacked-bar" aria-label="Win and loss distribution">
-                <div className="stacked-win" style={{ width: `${winPercent}%` }} />
-                <div className="stacked-loss" style={{ width: `${lossPercent}%` }} />
+                {providerName === "simulator" ? (
+                  <>
+                    <label className="provider-select">
+                      Velocidade
+                      <select
+                        value={simulatorSpeed}
+                        onChange={(event) =>
+                          handleSimulatorSpeedChange(event.target.value as SimulatorSpeed)
+                        }
+                      >
+                        <option value="lento">lento</option>
+                        <option value="normal">normal</option>
+                        <option value="rapido">rapido</option>
+                      </select>
+                    </label>
+                    <button className="analyze-button" type="button" onClick={handleSimulatorStart}>
+                      Iniciar simulacao
+                    </button>
+                    <button className="analyze-button" type="button" onClick={handleSimulatorPause}>
+                      Pausar simulacao
+                    </button>
+                    <button className="analyze-button" type="button" onClick={handleSimulatorReset}>
+                      Resetar simulacao
+                    </button>
+                  </>
+                ) : null}
               </div>
-              <p className="status-label">
-                Wins: {performanceAnalytics.win_loss_chart.wins} | Losses: {performanceAnalytics.win_loss_chart.losses}
+
+              <div className="status-line">
+                <p className="status-label">Ultima analise</p>
+                <p className="status-label">
+                  {lastAnalyzedAt ? formatClock(lastAnalyzedAt) : "Aguardando analise"}
+                </p>
+              </div>
+
+              <div className="action-row">
+                <button
+                  className="analyze-button"
+                  type="button"
+                  onClick={handleCheckHealth}
+                  disabled={isCheckingHealth}
+                >
+                  {isCheckingHealth ? "Consultando..." : "Atualizar health"}
+                </button>
+                <StatusBadge status={headerStatus} />
+              </div>
+
+              {health ? <JsonViewer data={health} /> : <p className="empty-state">Sem status consultado.</p>}
+              {healthError ? <p className="error-text">{healthError}</p> : null}
+            </Panel>
+          </div>
+        </section>
+
+        <section className="lower-panels">
+          <Panel title="Estatisticas" subtitle="Espaco reservado">
+            {analysis ? (
+              <JsonViewer data={analysis.statistics} />
+            ) : (
+              <p className="empty-state">Execute uma analise para exibir dados.</p>
+            )}
+          </Panel>
+
+          <Panel title="Padroes" subtitle="Espaco reservado">
+            {analysis ? <JsonViewer data={analysis.patterns} /> : <p className="empty-state">Sem dados.</p>}
+          </Panel>
+
+          <Panel title="Regime" subtitle="Espaco reservado">
+            {analysis ? <JsonViewer data={analysis.regime} /> : <p className="empty-state">Sem dados.</p>}
+          </Panel>
+
+          <Panel title="Tendencia" subtitle="Espaco reservado">
+            {analysis ? <JsonViewer data={analysis.trend} /> : <p className="empty-state">Sem dados.</p>}
+          </Panel>
+
+          <Panel title="Distribuicao" subtitle="Espaco reservado">
+            {analysis ? <JsonViewer data={analysis.probability} /> : <p className="empty-state">Sem dados.</p>}
+          </Panel>
+
+          <Panel title="Heatmap" subtitle="Espaco reservado">
+            {analysis ? <JsonViewer data={analysis.correlation} /> : <p className="empty-state">Sem dados.</p>}
+          </Panel>
+
+          <Panel title="Performance" subtitle="Espaco reservado">
+            <div className="learning-metrics">
+              <p>
+                <strong>Overall:</strong> {performanceAnalytics.overall_accuracy}%
+              </p>
+              <p>
+                <strong>Win Rate:</strong> {performanceAnalytics.win_rate}%
+              </p>
+              <p>
+                <strong>Loss Rate:</strong> {performanceAnalytics.loss_rate}%
+              </p>
+              <p>
+                <strong>Avg Confidence:</strong> {performanceAnalytics.average_confidence}%
+              </p>
+              <p>
+                <strong>Learning:</strong> {learning.learning_score}
+              </p>
+              <p>
+                <strong>Storage:</strong> {storageInfo.status}
               </p>
             </div>
 
-            <div className="chart-card">
-              <h4 className="status-label">Accuracy Timeline</h4>
-              <svg className="sparkline" viewBox="0 0 320 84" role="img" aria-label="Accuracy timeline">
-                <polyline points={accuracySparkline} fill="none" stroke="var(--accent-cyan)" strokeWidth="2" />
-              </svg>
-            </div>
-
-            <div className="chart-card">
-              <h4 className="status-label">Learning Curve</h4>
-              <svg className="sparkline" viewBox="0 0 320 84" role="img" aria-label="Learning curve">
-                <polyline points={learningSparkline} fill="none" stroke="var(--accent-lime)" strokeWidth="2" />
-              </svg>
-            </div>
-          </div>
-
-          <div className="chart-grid">
-            <div className="chart-card">
-              <h4 className="status-label">Accuracy por hora</h4>
-              <div className="bar-list">
-                {performanceAnalytics.accuracy_by_hour.slice(0, 12).map((item) => (
-                  <div className="bar-row" key={`hour-${item.key}`}>
-                    <span className="bar-label">{item.key}h</span>
-                    <div className="bar-track">
-                      <div className="bar-fill" style={{ width: `${item.accuracy}%` }} />
-                    </div>
-                    <span className="bar-value">{item.accuracy}%</span>
-                  </div>
-                ))}
+            <div className="chart-grid compact-grid">
+              <div className="chart-card">
+                <h4 className="status-label">Win/Loss</h4>
+                <div className="stacked-bar" aria-label="Win and loss distribution">
+                  <div className="stacked-win" style={{ width: `${winPercent}%` }} />
+                  <div className="stacked-loss" style={{ width: `${lossPercent}%` }} />
+                </div>
+              </div>
+              <div className="chart-card">
+                <h4 className="status-label">Accuracy Timeline</h4>
+                <svg className="sparkline" viewBox="0 0 320 84" role="img" aria-label="Accuracy timeline">
+                  <polyline points={accuracySparkline} fill="none" stroke="var(--accent-blue)" strokeWidth="2" />
+                </svg>
+              </div>
+              <div className="chart-card">
+                <h4 className="status-label">Learning Curve</h4>
+                <svg className="sparkline" viewBox="0 0 320 84" role="img" aria-label="Learning curve">
+                  <polyline points={learningSparkline} fill="none" stroke="var(--accent-emerald)" strokeWidth="2" />
+                </svg>
               </div>
             </div>
 
-            <div className="chart-card">
-              <h4 className="status-label">Accuracy por estrategia</h4>
-              <div className="bar-list">
-                {performanceAnalytics.accuracy_by_strategy.slice(0, 8).map((item) => (
-                  <div className="bar-row" key={`strategy-${item.key}`}>
-                    <span className="bar-label">{item.key}</span>
-                    <div className="bar-track">
-                      <div className="bar-fill" style={{ width: `${item.accuracy}%` }} />
-                    </div>
-                    <span className="bar-value">{item.accuracy}%</span>
-                  </div>
-                ))}
-              </div>
+            {storageMessage ? <p className="status-label">{storageMessage}</p> : null}
+            {scanMessage ? <p className="status-label">{scanMessage}</p> : null}
+            <div className="progress-track" role="progressbar" aria-valuenow={scanProgress}>
+              <div className="progress-fill" style={{ width: `${scanProgress}%` }} />
             </div>
 
-            <div className="chart-card">
-              <h4 className="status-label">Performance por padrao</h4>
-              <div className="bar-list">
-                {performanceAnalytics.performance_by_pattern.slice(0, 8).map((item) => (
-                  <div className="bar-row" key={`pattern-${item.key}`}>
-                    <span className="bar-label">{item.key}</span>
-                    <div className="bar-track">
-                      <div className="bar-fill" style={{ width: `${item.accuracy}%` }} />
-                    </div>
-                    <span className="bar-value">{item.accuracy}%</span>
-                  </div>
-                ))}
-              </div>
+            <div className="action-row">
+              <button className="analyze-button" type="button" onClick={saveLearningNow}>
+                Salvar memoria
+              </button>
+              <button className="analyze-button" type="button" onClick={clearLearningMemory}>
+                Limpar memoria
+              </button>
+              <button
+                className="analyze-button"
+                type="button"
+                onClick={handleScanHistory}
+                disabled={isScanningPatterns || learning.samples === 0}
+              >
+                {isScanningPatterns ? "Scanning..." : "Scan History"}
+              </button>
+              <button className="analyze-button" type="button" onClick={handleAutoStrategy}>
+                Auto strategy
+              </button>
+              <button className="analyze-button" type="button" onClick={handleManualStrategy}>
+                Manual strategy
+              </button>
+              <button
+                className="analyze-button"
+                type="button"
+                onClick={() => runStrategySelection(strategyMode, manualStrategy)}
+                disabled={!patternRanking.ranked_patterns.length && !patternDiscovery.patterns.length}
+              >
+                Atualizar estrategia
+              </button>
             </div>
-          </div>
 
-          <h4 className="status-label">Historico dos ultimos 100 resultados</h4>
-          <div className="pattern-table-wrapper">
-            <table className="pattern-table">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Outcome</th>
-                  <th>Strategy</th>
-                  <th>Pattern</th>
-                  <th>Prediction Acc.</th>
-                  <th>Confidence</th>
-                  <th>Risk</th>
-                  <th>Learning</th>
-                </tr>
-              </thead>
-              <tbody>
-                {performanceAnalytics.last_results.length ? (
-                  performanceAnalytics.last_results.map((item) => (
-                    <tr key={item.id}>
-                      <td>{formatClock(new Date(item.timestamp))}</td>
-                      <td>{item.outcome}</td>
-                      <td>{item.strategy}</td>
-                      <td>{item.pattern}</td>
-                      <td>{item.prediction_accuracy}%</td>
-                      <td>{item.confidence}%</td>
-                      <td>{item.risk}%</td>
-                      <td>{item.learning_score}</td>
-                    </tr>
-                  ))
-                ) : (
+            <div className="action-row">
+              <label className="provider-select">
+                Estrategia manual
+                <select
+                  value={manualStrategy}
+                  onChange={(event) =>
+                    setManualStrategy(
+                      event.target.value as
+                        | "Conservative"
+                        | "Balanced"
+                        | "Aggressive"
+                        | "Adaptive"
+                        | "Experimental"
+                    )
+                  }
+                >
+                  <option value="Conservative">Conservative</option>
+                  <option value="Balanced">Balanced</option>
+                  <option value="Aggressive">Aggressive</option>
+                  <option value="Adaptive">Adaptive</option>
+                  <option value="Experimental">Experimental</option>
+                </select>
+              </label>
+              <label className="provider-select">
+                Ordenar por
+                <select
+                  value={sortBy}
+                  onChange={(event) =>
+                    setSortBy(
+                      event.target.value as
+                        | "score"
+                        | "confidence"
+                        | "accuracy"
+                        | "occurrences"
+                        | "recent"
+                    )
+                  }
+                >
+                  <option value="score">Score</option>
+                  <option value="confidence">Confidence</option>
+                  <option value="accuracy">Accuracy</option>
+                  <option value="occurrences">Occurrences</option>
+                  <option value="recent">Last Seen</option>
+                </select>
+              </label>
+              <label className="provider-select">
+                Direcao
+                <select
+                  value={sortDirection}
+                  onChange={(event) => setSortDirection(event.target.value as "asc" | "desc")}
+                >
+                  <option value="desc">Desc</option>
+                  <option value="asc">Asc</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="pattern-table-wrapper">
+              <table className="pattern-table">
+                <thead>
                   <tr>
-                    <td colSpan={8}>Sem resultados historicos ainda.</td>
+                    <th>Pattern</th>
+                    <th>Rank</th>
+                    <th>Score</th>
+                    <th>Confidence</th>
+                    <th>Accuracy</th>
+                    <th>Occurrences</th>
+                    <th>Last Seen</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+                </thead>
+                <tbody>
+                  {rankedPatterns.slice(0, 8).length ? (
+                    rankedPatterns.slice(0, 8).map((pattern) => (
+                      <tr key={pattern.id}>
+                        <td>{pattern.pattern}</td>
+                        <td>{pattern.rank}</td>
+                        <td>{pattern.global_score}</td>
+                        <td>{pattern.confidence}%</td>
+                        <td>{pattern.accuracy}%</td>
+                        <td>{pattern.occurrences}</td>
+                        <td>{pattern.last_seen ? formatClock(new Date(pattern.last_seen)) : "-"}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7}>Sem ranking disponivel.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="status-label">
+              Top 10: {rankingTop10.length} | Top Confidence: {topConfidence}% | Top Accuracy: {topAccuracy}% |
+              Top Stable: {topStable}% | Top Recent: {topRecent}
+            </p>
+            <JsonViewer
+              data={{
+                recommendation: strategyResult.recommendation,
+                reason: strategyResult.reason,
+                strategy_history: strategyHistory.slice(0, 8),
+                discovery_summary: patternDiscovery.summary,
+              }}
+            />
+          </Panel>
+        </section>
       </section>
     </main>
   );
