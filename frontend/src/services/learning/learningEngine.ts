@@ -1,5 +1,5 @@
 import { LiveDataEvent } from "../live-data/types";
-import { LearningSnapshot } from "./types";
+import { LearningEngineState, LearningSnapshot } from "./types";
 
 const PATTERN_SIZE = 3;
 const WINDOW_SIZE = 10;
@@ -20,6 +20,37 @@ export class LearningEngine {
   private totalGapSeconds = 0;
   private gapCount = 0;
   private lastWindowDominant: string | null = null;
+  private lastUpdatedAt: string | null = null;
+
+  constructor(state?: LearningEngineState) {
+    if (!state) {
+      return;
+    }
+
+    this.history.push(...state.history);
+    this.hits = state.hits;
+    this.predictionCount = state.prediction_count;
+    this.trendUp = state.trend_up;
+    this.trendDown = state.trend_down;
+    this.trendFlat = state.trend_flat;
+    this.behaviorChanges = state.behavior_changes;
+    this.totalGapSeconds = state.total_gap_seconds;
+    this.gapCount = state.gap_count;
+    this.lastWindowDominant = state.last_window_dominant;
+    this.lastUpdatedAt = state.snapshot.last_updated_at;
+
+    Object.entries(state.pattern_frequency).forEach(([key, value]) => {
+      this.patternFreq.set(key, value);
+    });
+
+    Object.entries(state.transitions).forEach(([from, row]) => {
+      const map = new Map<string, number>();
+      Object.entries(row).forEach(([to, count]) => {
+        map.set(to, count);
+      });
+      this.transitionMap.set(from, map);
+    });
+  }
 
   ingest(event: LiveDataEvent): void {
     const previous = this.history[this.history.length - 1];
@@ -34,6 +65,7 @@ export class LearningEngine {
     this.history.push(event);
     this.updatePatternFrequency();
     this.detectBehaviorChange();
+    this.lastUpdatedAt = event.timestamp;
   }
 
   getSnapshot(): LearningSnapshot {
@@ -56,6 +88,7 @@ export class LearningEngine {
       accuracy: round2(accuracy),
       adaptation_level: round2(adaptationLevel),
       stability: round2(stability),
+      last_updated_at: this.lastUpdatedAt,
       pattern_memory: this.patternMemoryTop(12),
       trend_memory: {
         up: this.trendUp,
@@ -64,6 +97,39 @@ export class LearningEngine {
         behavior_changes: this.behaviorChanges,
         average_gap_seconds: round2(this.gapCount ? this.totalGapSeconds / this.gapCount : 0),
       },
+    };
+  }
+
+  exportState(): LearningEngineState {
+    const snapshot = this.getSnapshot();
+
+    const transitions: Record<string, Record<string, number>> = {};
+    this.transitionMap.forEach((row, from) => {
+      transitions[from] = {};
+      row.forEach((count, to) => {
+        transitions[from][to] = count;
+      });
+    });
+
+    const patternFrequency: Record<string, number> = {};
+    this.patternFreq.forEach((count, pattern) => {
+      patternFrequency[pattern] = count;
+    });
+
+    return {
+      history: [...this.history],
+      pattern_frequency: patternFrequency,
+      transitions,
+      hits: this.hits,
+      prediction_count: this.predictionCount,
+      trend_up: this.trendUp,
+      trend_down: this.trendDown,
+      trend_flat: this.trendFlat,
+      behavior_changes: this.behaviorChanges,
+      total_gap_seconds: this.totalGapSeconds,
+      gap_count: this.gapCount,
+      last_window_dominant: this.lastWindowDominant,
+      snapshot,
     };
   }
 

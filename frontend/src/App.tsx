@@ -7,6 +7,8 @@ import { StatusBadge } from "./components/StatusBadge";
 import { LearningEngine } from "./services/learning/learningEngine";
 import { LearningSnapshot } from "./services/learning/types";
 import { liveDataService } from "./services/live-data/liveDataService";
+import { storageService } from "./services/storage/storageService";
+import { PersistentStorageInfo } from "./services/storage/types";
 import {
   LiveDataEvent,
   LiveDataProviderName,
@@ -80,6 +82,7 @@ function createEmptyLearning(): LearningSnapshot {
     accuracy: 0,
     adaptation_level: 0,
     stability: 0,
+    last_updated_at: null,
     pattern_memory: {},
     trend_memory: {
       up: 0,
@@ -88,6 +91,16 @@ function createEmptyLearning(): LearningSnapshot {
       behavior_changes: 0,
       average_gap_seconds: 0,
     },
+  };
+}
+
+function createEmptyStorageInfo(): PersistentStorageInfo {
+  return {
+    status: "empty",
+    last_save: null,
+    total_records: 0,
+    memory_usage: 0,
+    auto_save: true,
   };
 }
 
@@ -112,12 +125,46 @@ function App() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [lastAnalyzedAt, setLastAnalyzedAt] = useState<Date | null>(null);
   const [learning, setLearning] = useState<LearningSnapshot>(createEmptyLearning);
+  const [storageInfo, setStorageInfo] = useState<PersistentStorageInfo>(createEmptyStorageInfo);
+  const [storageMessage, setStorageMessage] = useState<string | null>(null);
 
   const debounceTimerRef = useRef<number | null>(null);
   const isAnalyzingRef = useRef(false);
   const pendingAutoAnalyzeRef = useRef(false);
   const lastAnalysisSignatureRef = useRef<string>("");
   const learningEngineRef = useRef(new LearningEngine());
+    const refreshStorageInfo = useCallback(() => {
+      setStorageInfo(storageService.getStorageInfo(true));
+    }, []);
+
+    const saveLearningNow = useCallback(() => {
+      try {
+        const state = learningEngineRef.current.exportState();
+        const savedAt = storageService.saveLearningState(state);
+        refreshStorageInfo();
+        setStorageMessage(`Memoria salva em ${formatClock(new Date(savedAt))}`);
+      } catch {
+        setStorageMessage("Falha ao salvar memoria");
+        refreshStorageInfo();
+      }
+    }, [refreshStorageInfo]);
+
+    const clearLearningMemory = useCallback(() => {
+      const confirmClear = window.confirm(
+        "Tem certeza que deseja limpar a memoria persistente do LearningEngine?"
+      );
+      if (!confirmClear) {
+        return;
+      }
+
+      storageService.clearLearningState();
+      learningEngineRef.current = new LearningEngine();
+      lastIngestedIndexRef.current = 0;
+      setLearning(createEmptyLearning());
+      setStorageMessage("Memoria persistente removida");
+      refreshStorageInfo();
+    }, [refreshStorageInfo]);
+
   const lastIngestedIndexRef = useRef(0);
 
   const executeAnalysis = useCallback(
@@ -209,6 +256,15 @@ function App() {
   }, [providerName]);
 
   useEffect(() => {
+    const restored = storageService.loadLearningState();
+    if (restored) {
+      learningEngineRef.current = new LearningEngine(restored);
+      setLearning(learningEngineRef.current.getSnapshot());
+      lastIngestedIndexRef.current = 0;
+      setStorageMessage("Memoria carregada automaticamente");
+    }
+    refreshStorageInfo();
+
     const unsubscribe = liveDataService.subscribe((events) => {
       setLiveEvents(events);
       setLiveConnected(liveDataService.isConnected());
@@ -219,12 +275,10 @@ function App() {
         newEvents.forEach((event) => learningEngineRef.current.ingest(event));
         if (newEvents.length) {
           setLearning(learningEngineRef.current.getSnapshot());
+          saveLearningNow();
         }
         lastIngestedIndexRef.current = events.length;
       } else {
-        learningEngineRef.current = new LearningEngine();
-        events.forEach((event) => learningEngineRef.current.ingest(event));
-        setLearning(learningEngineRef.current.getSnapshot());
         lastIngestedIndexRef.current = events.length;
       }
 
@@ -243,7 +297,7 @@ function App() {
       unsubscribe();
       liveDataService.disconnect();
     };
-  }, [scheduleAutoAnalyze]);
+  }, [refreshStorageInfo, saveLearningNow, scheduleAutoAnalyze]);
 
   function handleConnectLiveData() {
     liveDataService.connect();
@@ -262,6 +316,7 @@ function App() {
     learningEngineRef.current = new LearningEngine();
     lastIngestedIndexRef.current = 0;
     setLearning(createEmptyLearning());
+    refreshStorageInfo();
   }
 
   async function handleCheckHealth() {
@@ -461,6 +516,28 @@ function App() {
               trend_memory: learning.trend_memory,
             }}
           />
+        </Panel>
+        <Panel title="Persistent Storage" subtitle="memoria local do LearningEngine">
+          <div className="learning-metrics">
+            <p><strong>Storage Status:</strong> {storageInfo.status}</p>
+            <p>
+              <strong>Last Save:</strong>{" "}
+              {storageInfo.last_save ? formatClock(new Date(storageInfo.last_save)) : "-"}
+            </p>
+            <p><strong>Total Records:</strong> {storageInfo.total_records}</p>
+            <p><strong>Memory Usage:</strong> {storageInfo.memory_usage} bytes</p>
+            <p><strong>Auto Save:</strong> {storageInfo.auto_save ? "on" : "off"}</p>
+          </div>
+          <div className="action-row">
+            <button className="analyze-button" type="button" onClick={saveLearningNow}>
+              Salvar Agora
+            </button>
+            <button className="analyze-button" type="button" onClick={clearLearningMemory}>
+              Limpar Memoria
+            </button>
+          </div>
+          {storageMessage ? <p className="status-label">{storageMessage}</p> : null}
+          <JsonViewer data={storageInfo} />
         </Panel>
       </section>
     </main>
