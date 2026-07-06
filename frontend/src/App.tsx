@@ -5,7 +5,10 @@ import { JsonViewer } from "./components/JsonViewer";
 import { Panel } from "./components/Panel";
 import { StatusBadge } from "./components/StatusBadge";
 import { liveDataService } from "./services/live-data/liveDataService";
-import { LiveDataEvent } from "./services/live-data/types";
+import {
+  LiveDataEvent,
+  LiveDataProviderName,
+} from "./services/live-data/types";
 import {
   LaboratoryAnalyzeResponse,
   LaboratoryEvent,
@@ -72,6 +75,12 @@ function App() {
   const [health, setHealth] = useState<LaboratoryHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [providerName, setProviderName] = useState<LiveDataProviderName>(
+    liveDataService.getProviderName()
+  );
+  const [availableProviders] = useState<LiveDataProviderName[]>(
+    liveDataService.getAvailableProviders()
+  );
   const [liveConnected, setLiveConnected] = useState(liveDataService.isConnected());
   const [liveEvents, setLiveEvents] = useState<LiveDataEvent[]>(liveDataService.getLatestEvents());
   const [analysis, setAnalysis] = useState<LaboratoryAnalyzeResponse | null>(
@@ -156,10 +165,31 @@ function App() {
     }, 500);
   }, [executeAnalysis]);
 
+  const pushManualEvent = useCallback(() => {
+    if (providerName !== "manual") {
+      return;
+    }
+
+    const number = Math.floor(Math.random() * 15);
+    const color: "red" | "black" | "white" =
+      number === 0 ? "white" : number % 2 === 0 ? "black" : "red";
+    const current = liveDataService.getLatestEvents();
+    const sequence = [...current.slice(-7).map((item) => item.color), color];
+
+    liveDataService.pushManualEvent?.({
+      timestamp: new Date().toISOString(),
+      color,
+      number,
+      white: color === "white",
+      sequence,
+    });
+  }, [providerName]);
+
   useEffect(() => {
     const unsubscribe = liveDataService.subscribe((events) => {
       setLiveEvents(events);
       setLiveConnected(liveDataService.isConnected());
+      setProviderName(liveDataService.getProviderName());
       if (events.length) {
         scheduleAutoAnalyze();
       }
@@ -184,6 +214,12 @@ function App() {
 
   function handleDisconnectLiveData() {
     liveDataService.disconnect();
+    setLiveConnected(liveDataService.isConnected());
+  }
+
+  function handleProviderChange(name: LiveDataProviderName) {
+    liveDataService.setProvider(name);
+    setProviderName(liveDataService.getProviderName());
     setLiveConnected(liveDataService.isConnected());
   }
 
@@ -234,6 +270,21 @@ function App() {
             <p className="empty-state">Sem eventos recebidos do stream no momento.</p>
           )}
           <div className="action-row">
+            <label className="provider-select">
+              Fonte de dados
+              <select
+                value={providerName}
+                onChange={(event) =>
+                  handleProviderChange(event.target.value as LiveDataProviderName)
+                }
+              >
+                {availableProviders.map((name) => (
+                  <option key={name} value={name}>
+                    {name.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               className="analyze-button"
               type="button"
@@ -258,6 +309,16 @@ function App() {
             >
               {isAnalyzing ? "Analisando..." : "Analisar"}
             </button>
+            {providerName === "manual" ? (
+              <button
+                className="analyze-button"
+                type="button"
+                onClick={pushManualEvent}
+                disabled={!liveConnected}
+              >
+                Inserir evento manual
+              </button>
+            ) : null}
             <span>{liveEvents.length} eventos detectados</span>
             {isAnalyzing ? <span className="spinner" aria-label="Analisando" /> : null}
           </div>
@@ -267,6 +328,10 @@ function App() {
           <div className="status-line">
             <p className="status-label">Estado do stream</p>
             <StatusBadge status={liveConnected ? "online" : "offline"} />
+          </div>
+          <div className="status-line">
+            <p className="status-label">Provider ativo</p>
+            <StatusBadge status={providerName} />
           </div>
           <div className="status-line">
             <p className="status-label">Estado da analise</p>

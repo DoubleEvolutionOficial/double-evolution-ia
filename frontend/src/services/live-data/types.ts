@@ -8,6 +8,8 @@ export type LiveDataEvent = {
 
 export type LiveDataCallback = (events: LiveDataEvent[]) => void;
 
+export type LiveDataProviderName = "mock" | "manual" | "external";
+
 export interface LiveDataProviderContract {
   connect(): void;
   disconnect(): void;
@@ -16,4 +18,9 @@ export interface LiveDataProviderContract {
   subscribe(callback: LiveDataCallback): () => void;
 }
 
-export interface LiveDataServiceContract extends LiveDataProviderContract {}
+export interface LiveDataServiceContract extends LiveDataProviderContract {
+  getProviderName(): LiveDataProviderName;
+  setProvider(name: LiveDataProviderName): void;
+  getAvailableProviders(): LiveDataProviderName[];
+  pushManualEvent?(event: LiveDataEvent): void;
+}

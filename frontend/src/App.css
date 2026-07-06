@@ -116,6 +116,23 @@ body {
   flex-wrap: wrap;
 }
 
+.provider-select {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.provider-select select {
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(4, 6, 11, 0.78);
+  color: var(--text-primary);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+}
+
 .analyze-button {
   border: 1px solid rgba(0, 214, 255, 0.5);
   background: linear-gradient(120deg, rgba(0, 214, 255, 0.28), rgba(255, 126, 109, 0.22));
