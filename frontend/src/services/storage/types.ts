@@ -1,6 +1,7 @@
 import { LearningEngineState } from "../learning/types";
 import { PatternDiscoveryResult } from "../pattern-discovery/types";
 import { PatternRankingResult } from "../pattern-ranking/types";
+import { StrategyCenterState } from "../strategy/types";
 
 export interface StorageDriver {
   getItem(key: string): string | null;
@@ -29,4 +30,9 @@ export type PersistentPatternDiscoveryRecord = {
 export type PersistentPatternRankingRecord = {
   updated_at: string;
   result: PatternRankingResult;
+};
+
+export type PersistentStrategyCenterRecord = {
+  updated_at: string;
+  state: StrategyCenterState;
 };

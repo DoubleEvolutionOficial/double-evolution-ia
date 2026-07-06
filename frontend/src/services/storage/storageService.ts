@@ -1,11 +1,13 @@
 import { LearningEngineState } from "../learning/types";
 import { PatternDiscoveryResult } from "../pattern-discovery/types";
 import { PatternRankingResult } from "../pattern-ranking/types";
+import { StrategyCenterState } from "../strategy/types";
 import { LocalStorageDriver } from "./localStorageDriver";
 import {
   PersistentLearningRecord,
   PersistentPatternDiscoveryRecord,
   PersistentPatternRankingRecord,
+  PersistentStrategyCenterRecord,
   PersistentStorageInfo,
   StorageDriver,
 } from "./types";
@@ -13,6 +15,7 @@ import {
 const LEARNING_STORAGE_KEY = "double-evolution.learning-engine.v1";
 const PATTERN_DISCOVERY_STORAGE_KEY = "double-evolution.pattern-discovery.v1";
 const PATTERN_RANKING_STORAGE_KEY = "double-evolution.pattern-ranking.v1";
+const STRATEGY_CENTER_STORAGE_KEY = "double-evolution.strategy-center.v1";
 
 export class StorageService {
   private readonly driver: StorageDriver;
@@ -124,6 +127,41 @@ export class StorageService {
     this.driver.removeItem(PATTERN_RANKING_STORAGE_KEY);
   }
 
+  loadStrategyCenterState(): StrategyCenterState | null {
+    try {
+      const raw = this.driver.getItem(STRATEGY_CENTER_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(raw) as PersistentStrategyCenterRecord;
+      return parsed?.state ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  saveStrategyCenterState(state: StrategyCenterState): string {
+    const now = new Date().toISOString();
+    const payload: PersistentStrategyCenterRecord = {
+      updated_at: now,
+      state: {
+        ...state,
+        result: {
+          ...state.result,
+          generated_at: now,
+        },
+      },
+    };
+
+    this.driver.setItem(STRATEGY_CENTER_STORAGE_KEY, JSON.stringify(payload));
+    return now;
+  }
+
+  clearStrategyCenterState(): void {
+    this.driver.removeItem(STRATEGY_CENTER_STORAGE_KEY);
+  }
+
   getStorageInfo(autoSave = true): PersistentStorageInfo {
     try {
       const raw = this.driver.getItem(LEARNING_STORAGE_KEY);
@@ -207,6 +245,40 @@ export class StorageService {
 
       const parsed = JSON.parse(raw) as PersistentPatternRankingRecord;
       const totalRecords = parsed.result?.ranked_patterns?.length ?? 0;
+
+      return {
+        status: "ready",
+        last_save: parsed.updated_at ?? null,
+        total_records: totalRecords,
+        memory_usage: raw.length,
+        auto_save: autoSave,
+      };
+    } catch {
+      return {
+        status: "error",
+        last_save: null,
+        total_records: 0,
+        memory_usage: 0,
+        auto_save: autoSave,
+      };
+    }
+  }
+
+  getStrategyCenterStorageInfo(autoSave = true): PersistentStorageInfo {
+    try {
+      const raw = this.driver.getItem(STRATEGY_CENTER_STORAGE_KEY);
+      if (!raw) {
+        return {
+          status: "empty",
+          last_save: null,
+          total_records: 0,
+          memory_usage: 0,
+          auto_save: autoSave,
+        };
+      }
+
+      const parsed = JSON.parse(raw) as PersistentStrategyCenterRecord;
+      const totalRecords = parsed.state?.history?.length ?? 0;
 
       return {
         status: "ready",

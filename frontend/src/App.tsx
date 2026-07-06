@@ -14,8 +14,14 @@ import {
 import { PatternRankingEngine } from "./services/pattern-ranking/patternRankingEngine";
 import {
   PatternRankingResult,
-  RankedPattern,
 } from "./services/pattern-ranking/types";
+import { StrategyEngine } from "./services/strategy/strategyEngine";
+import {
+  StrategyCenterState,
+  StrategyDecision,
+  StrategyMode,
+  StrategyResult,
+} from "./services/strategy/types";
 import { liveDataService } from "./services/live-data/liveDataService";
 import { storageService } from "./services/storage/storageService";
 import { PersistentStorageInfo } from "./services/storage/types";
@@ -135,6 +141,21 @@ function createEmptyPatternRanking(): PatternRankingResult {
   };
 }
 
+function createEmptyStrategyResult(): StrategyResult {
+  return {
+    best_strategy: "Auto",
+    strategy_score: 0,
+    expected_win_rate: 0,
+    expected_risk: 0,
+    confidence: 0,
+    expected_delay: 0,
+    recommendation: "Aguardando dados para estrategia.",
+    reason: "Sem dados suficientes para classificar estrategia.",
+    generated_at: new Date(0).toISOString(),
+    strategy_scores: [],
+  };
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -170,6 +191,14 @@ function App() {
   const [patternRanking, setPatternRanking] = useState<PatternRankingResult>(
     createEmptyPatternRanking
   );
+  const [strategyMode, setStrategyMode] = useState<StrategyMode>("auto");
+  const [manualStrategy, setManualStrategy] = useState<
+    "Conservative" | "Balanced" | "Aggressive" | "Adaptive" | "Experimental"
+  >("Balanced");
+  const [strategyResult, setStrategyResult] = useState<StrategyResult>(
+    createEmptyStrategyResult
+  );
+  const [strategyHistory, setStrategyHistory] = useState<StrategyDecision[]>([]);
   const [isScanningPatterns, setIsScanningPatterns] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
@@ -186,46 +215,141 @@ function App() {
   const isAnalyzingRef = useRef(false);
   const pendingAutoAnalyzeRef = useRef(false);
   const lastAnalysisSignatureRef = useRef<string>("");
+  const strategyHistoryRef = useRef<StrategyDecision[]>([]);
   const learningEngineRef = useRef(new LearningEngine());
   const patternDiscoveryEngineRef = useRef(new PatternDiscoveryEngine());
   const patternRankingEngineRef = useRef(new PatternRankingEngine());
-    const refreshStorageInfo = useCallback(() => {
-      setStorageInfo(storageService.getStorageInfo(true));
-    }, []);
+  const strategyEngineRef = useRef(new StrategyEngine());
 
-    const saveLearningNow = useCallback(() => {
-      try {
-        const state = learningEngineRef.current.exportState();
-        const savedAt = storageService.saveLearningState(state);
-        refreshStorageInfo();
-        setStorageMessage(`Memoria salva em ${formatClock(new Date(savedAt))}`);
-      } catch {
-        setStorageMessage("Falha ao salvar memoria");
-        refreshStorageInfo();
-      }
-    }, [refreshStorageInfo]);
+  const refreshStorageInfo = useCallback(() => {
+    setStorageInfo(storageService.getStorageInfo(true));
+  }, []);
 
-    const clearLearningMemory = useCallback(() => {
-      const confirmClear = window.confirm(
-        "Tem certeza que deseja limpar a memoria persistente do LearningEngine?"
-      );
-      if (!confirmClear) {
-        return;
-      }
-
-      storageService.clearLearningState();
-      storageService.clearPatternDiscoveryResult();
-      storageService.clearPatternRankingResult();
-      learningEngineRef.current = new LearningEngine();
-      lastIngestedIndexRef.current = 0;
-      setLearning(createEmptyLearning());
-      setStorageMessage("Memoria persistente removida");
-      setPatternDiscovery(createEmptyPatternDiscovery());
-      setPatternRanking(createEmptyPatternRanking());
-      setScanProgress(0);
-      setScanMessage(null);
+  const saveLearningNow = useCallback(() => {
+    try {
+      const state = learningEngineRef.current.exportState();
+      const savedAt = storageService.saveLearningState(state);
       refreshStorageInfo();
-    }, [refreshStorageInfo]);
+      setStorageMessage(`Memoria salva em ${formatClock(new Date(savedAt))}`);
+    } catch {
+      setStorageMessage("Falha ao salvar memoria");
+      refreshStorageInfo();
+    }
+  }, [refreshStorageInfo]);
+
+  const appendStrategyHistory = useCallback(
+    (
+      result: StrategyResult,
+      mode: StrategyMode,
+      previous: StrategyDecision[]
+    ): StrategyDecision[] => {
+      const now = result.generated_at;
+      const latest = previous[0];
+
+      if (
+        latest &&
+        latest.strategy === result.best_strategy &&
+        latest.mode === mode &&
+        Math.abs(latest.strategy_score - result.strategy_score) < 0.5
+      ) {
+        return previous;
+      }
+
+      const nextEntry: StrategyDecision = {
+        strategy: result.best_strategy,
+        strategy_score: result.strategy_score,
+        expected_win_rate: result.expected_win_rate,
+        expected_risk: result.expected_risk,
+        confidence: result.confidence,
+        expected_delay: result.expected_delay,
+        recommendation: result.recommendation,
+        reason: result.reason,
+        selected_at: now,
+        mode,
+      };
+
+      return [nextEntry, ...previous].slice(0, 20);
+    },
+    []
+  );
+
+  const runStrategySelection = useCallback(
+    (
+      nextMode: StrategyMode,
+      nextManual: "Conservative" | "Balanced" | "Aggressive" | "Adaptive" | "Experimental",
+      historyBase?: StrategyDecision[]
+    ) => {
+      const state = learningEngineRef.current.exportState();
+
+      const result = strategyEngineRef.current.evaluate({
+        ranking: patternRanking,
+        discovery: patternDiscovery,
+        learningState: state,
+        trend: analysis?.trend ?? null,
+        seasonality: analysis?.seasonality ?? null,
+        consensus: analysis?.consensus ?? null,
+        risk: analysis?.risk ?? null,
+        signal: analysis?.signal ?? null,
+        liveEvents,
+        mode: nextMode,
+        manualStrategy: nextManual,
+      });
+
+      const base = historyBase ?? strategyHistoryRef.current;
+      const updatedHistory = appendStrategyHistory(result, nextMode, base);
+      setStrategyResult(result);
+      setStrategyHistory(updatedHistory);
+
+      const centerState: StrategyCenterState = {
+        mode: nextMode,
+        manual_strategy: nextManual,
+        result,
+        history: updatedHistory,
+      };
+
+      storageService.saveStrategyCenterState(centerState);
+      refreshStorageInfo();
+    },
+    [
+      analysis,
+      appendStrategyHistory,
+      liveEvents,
+      patternDiscovery,
+      patternRanking,
+      refreshStorageInfo,
+    ]
+  );
+
+  useEffect(() => {
+    strategyHistoryRef.current = strategyHistory;
+  }, [strategyHistory]);
+
+  const clearLearningMemory = useCallback(() => {
+    const confirmClear = window.confirm(
+      "Tem certeza que deseja limpar a memoria persistente do LearningEngine?"
+    );
+    if (!confirmClear) {
+      return;
+    }
+
+    storageService.clearLearningState();
+    storageService.clearPatternDiscoveryResult();
+    storageService.clearPatternRankingResult();
+    storageService.clearStrategyCenterState();
+    learningEngineRef.current = new LearningEngine();
+    lastIngestedIndexRef.current = 0;
+    setLearning(createEmptyLearning());
+    setStorageMessage("Memoria persistente removida");
+    setPatternDiscovery(createEmptyPatternDiscovery());
+    setPatternRanking(createEmptyPatternRanking());
+    setStrategyMode("auto");
+    setManualStrategy("Balanced");
+    setStrategyResult(createEmptyStrategyResult());
+    setStrategyHistory([]);
+    setScanProgress(0);
+    setScanMessage(null);
+    refreshStorageInfo();
+  }, [refreshStorageInfo]);
 
   const lastIngestedIndexRef = useRef(0);
 
@@ -263,6 +387,9 @@ function App() {
         setAnalysisState("success");
         setLastAnalyzedAt(new Date());
         lastAnalysisSignatureRef.current = signature;
+        if (patternRanking.ranked_patterns.length || patternDiscovery.patterns.length) {
+          runStrategySelection(strategyMode, manualStrategy);
+        }
       } catch (err) {
         const mapped = mapErrorToState(err);
         setAnalysisState(mapped.state);
@@ -283,7 +410,13 @@ function App() {
         }
       }
     },
-    []
+    [
+      manualStrategy,
+      patternDiscovery.patterns.length,
+      patternRanking.ranked_patterns.length,
+      runStrategySelection,
+      strategyMode,
+    ]
   );
 
   const scheduleAutoAnalyze = useCallback(() => {
@@ -336,6 +469,14 @@ function App() {
       setPatternRanking(storedRanking);
     }
 
+    const storedStrategy = storageService.loadStrategyCenterState();
+    if (storedStrategy) {
+      setStrategyMode(storedStrategy.mode);
+      setManualStrategy(storedStrategy.manual_strategy);
+      setStrategyResult(storedStrategy.result);
+      setStrategyHistory(storedStrategy.history);
+    }
+
     refreshStorageInfo();
 
     const unsubscribe = liveDataService.subscribe((events) => {
@@ -349,6 +490,9 @@ function App() {
         if (newEvents.length) {
           setLearning(learningEngineRef.current.getSnapshot());
           saveLearningNow();
+          if (patternRanking.ranked_patterns.length || patternDiscovery.patterns.length) {
+            runStrategySelection(strategyMode, manualStrategy);
+          }
         }
         lastIngestedIndexRef.current = events.length;
       } else {
@@ -414,6 +558,16 @@ function App() {
     await executeAnalysis("manual");
   }
 
+  function handleAutoStrategy() {
+    setStrategyMode("auto");
+    runStrategySelection("auto", manualStrategy);
+  }
+
+  function handleManualStrategy() {
+    setStrategyMode("manual");
+    runStrategySelection("manual", manualStrategy);
+  }
+
   async function handleScanHistory() {
     if (isScanningPatterns) {
       return;
@@ -444,6 +598,7 @@ function App() {
       await delay(80);
       setPatternDiscovery(result);
       setPatternRanking(ranking);
+      runStrategySelection(strategyMode, manualStrategy);
       setScanProgress(100);
       setScanMessage(`Scan concluido as ${formatClock(new Date())}`);
     } catch {
@@ -872,6 +1027,123 @@ function App() {
                 ) : (
                   <tr>
                     <td colSpan={8}>Nenhum padrao ranqueado ainda.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel title="Strategy Center" subtitle="selecao automatica de estrategia em tempo real">
+          <div className="learning-metrics">
+            <p><strong>Current Strategy:</strong> {strategyResult.best_strategy}</p>
+            <p><strong>Strategy Score:</strong> {strategyResult.strategy_score}</p>
+            <p><strong>Expected Win Rate:</strong> {strategyResult.expected_win_rate}%</p>
+            <p><strong>Expected Risk:</strong> {strategyResult.expected_risk}%</p>
+            <p><strong>Confidence:</strong> {strategyResult.confidence}%</p>
+            <p><strong>Expected Delay:</strong> {strategyResult.expected_delay}s</p>
+            <p><strong>Mode:</strong> {strategyMode.toUpperCase()}</p>
+          </div>
+
+          <div className="action-row">
+            <button className="analyze-button" type="button" onClick={handleAutoStrategy}>
+              Auto Strategy
+            </button>
+            <button className="analyze-button" type="button" onClick={handleManualStrategy}>
+              Manual Strategy
+            </button>
+            <label className="provider-select">
+              Estrategia manual
+              <select
+                value={manualStrategy}
+                onChange={(event) =>
+                  setManualStrategy(
+                    event.target.value as
+                      | "Conservative"
+                      | "Balanced"
+                      | "Aggressive"
+                      | "Adaptive"
+                      | "Experimental"
+                  )
+                }
+              >
+                <option value="Conservative">Conservative</option>
+                <option value="Balanced">Balanced</option>
+                <option value="Aggressive">Aggressive</option>
+                <option value="Adaptive">Adaptive</option>
+                <option value="Experimental">Experimental</option>
+              </select>
+            </label>
+            <button
+              className="analyze-button"
+              type="button"
+              onClick={() => runStrategySelection(strategyMode, manualStrategy)}
+              disabled={!patternRanking.ranked_patterns.length && !patternDiscovery.patterns.length}
+            >
+              Atualizar estrategia
+            </button>
+          </div>
+
+          <div className="status-line">
+            <p className="status-label"><strong>Recommendation:</strong> {strategyResult.recommendation}</p>
+          </div>
+          <p className="status-label"><strong>Reason:</strong> {strategyResult.reason}</p>
+
+          <div className="pattern-table-wrapper">
+            <table className="pattern-table">
+              <thead>
+                <tr>
+                  <th>Strategy</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {strategyResult.strategy_scores.length ? (
+                  strategyResult.strategy_scores.map((row) => (
+                    <tr key={`strategy-score-${row.strategy}`}>
+                      <td>{row.strategy}</td>
+                      <td>{row.score}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={2}>Sem scores de estrategia ainda.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <h4 className="status-label">Historico de estrategias</h4>
+          <div className="pattern-table-wrapper">
+            <table className="pattern-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Mode</th>
+                  <th>Strategy</th>
+                  <th>Score</th>
+                  <th>Win Rate</th>
+                  <th>Risk</th>
+                  <th>Confidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {strategyHistory.length ? (
+                  strategyHistory.map((item, index) => (
+                    <tr key={`strategy-history-${item.selected_at}-${index}`}>
+                      <td>{formatClock(new Date(item.selected_at))}</td>
+                      <td>{item.mode}</td>
+                      <td>{item.strategy}</td>
+                      <td>{item.strategy_score}</td>
+                      <td>{item.expected_win_rate}%</td>
+                      <td>{item.expected_risk}%</td>
+                      <td>{item.confidence}%</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7}>Nenhuma estrategia selecionada ainda.</td>
                   </tr>
                 )}
               </tbody>
