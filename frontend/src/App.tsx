@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
 import { JsonViewer } from "./components/JsonViewer";
@@ -64,6 +64,10 @@ function toLaboratoryEvent(event: LiveDataEvent): LaboratoryEvent {
   };
 }
 
+function formatClock(time: Date): string {
+  return time.toLocaleTimeString("pt-BR", { hour12: false });
+}
+
 function App() {
   const [health, setHealth] = useState<LaboratoryHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
@@ -77,21 +81,101 @@ function App() {
   const [analysisState, setAnalysisState] = useState<RequestState>("idle");
   const [healthError, setHealthError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [lastAnalyzedAt, setLastAnalyzedAt] = useState<Date | null>(null);
+
+  const debounceTimerRef = useRef<number | null>(null);
+  const isAnalyzingRef = useRef(false);
+  const pendingAutoAnalyzeRef = useRef(false);
+  const lastAnalysisSignatureRef = useRef<string>("");
+
+  const executeAnalysis = useCallback(
+    async (reason: "auto" | "manual") => {
+      if (isAnalyzingRef.current) {
+        if (reason === "auto") {
+          pendingAutoAnalyzeRef.current = true;
+        }
+        return;
+      }
+
+      const streamEvents = liveDataService.getLatestEvents().slice(-24);
+      const events = streamEvents.map(toLaboratoryEvent);
+      if (!events.length) {
+        setAnalysisState("idle");
+        setAnalysisError("Sem eventos no Live Data Service para analise");
+        return;
+      }
+
+      const latest = streamEvents[streamEvents.length - 1];
+      const signature = `${streamEvents.length}-${latest.timestamp}-${latest.number}-${latest.color}`;
+      if (reason === "auto" && signature === lastAnalysisSignatureRef.current) {
+        return;
+      }
+
+      isAnalyzingRef.current = true;
+      setIsAnalyzing(true);
+      setAnalysisError(null);
+      setAnalysisState("loading");
+
+      try {
+        const result = await analyzeLaboratory({ events });
+        setAnalysis(result);
+        setAnalysisState("success");
+        setLastAnalyzedAt(new Date());
+        lastAnalysisSignatureRef.current = signature;
+      } catch (err) {
+        const mapped = mapErrorToState(err);
+        setAnalysisState(mapped.state);
+        setAnalysisError(mapped.message);
+      } finally {
+        setIsAnalyzing(false);
+        isAnalyzingRef.current = false;
+
+        if (pendingAutoAnalyzeRef.current) {
+          pendingAutoAnalyzeRef.current = false;
+          if (debounceTimerRef.current !== null) {
+            window.clearTimeout(debounceTimerRef.current);
+          }
+          debounceTimerRef.current = window.setTimeout(() => {
+            debounceTimerRef.current = null;
+            void executeAnalysis("auto");
+          }, 500);
+        }
+      }
+    },
+    []
+  );
+
+  const scheduleAutoAnalyze = useCallback(() => {
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = window.setTimeout(() => {
+      debounceTimerRef.current = null;
+      void executeAnalysis("auto");
+    }, 500);
+  }, [executeAnalysis]);
 
   useEffect(() => {
     const unsubscribe = liveDataService.subscribe((events) => {
       setLiveEvents(events);
       setLiveConnected(liveDataService.isConnected());
+      if (events.length) {
+        scheduleAutoAnalyze();
+      }
     });
 
     liveDataService.connect();
     handleCheckHealth();
 
     return () => {
+      if (debounceTimerRef.current !== null) {
+        window.clearTimeout(debounceTimerRef.current);
+      }
       unsubscribe();
       liveDataService.disconnect();
     };
-  }, []);
+  }, [scheduleAutoAnalyze]);
 
   function handleConnectLiveData() {
     liveDataService.connect();
@@ -122,24 +206,7 @@ function App() {
   }
 
   async function handleAnalyze() {
-    setIsAnalyzing(true);
-    setAnalysisError(null);
-    setAnalysisState("loading");
-    try {
-      const events = liveDataService.getLatestEvents().slice(-24).map(toLaboratoryEvent);
-      if (!events.length) {
-        throw new Error("Sem eventos no Live Data Service para analise");
-      }
-      const result = await analyzeLaboratory({ events });
-      setAnalysis(result);
-      setAnalysisState("success");
-    } catch (err) {
-      const mapped = mapErrorToState(err);
-      setAnalysisState(mapped.state);
-      setAnalysisError(mapped.message);
-    } finally {
-      setIsAnalyzing(false);
-    }
+    await executeAnalysis("manual");
   }
 
   return (
@@ -192,7 +259,11 @@ function App() {
               {isAnalyzing ? "Analisando..." : "Analisar"}
             </button>
             <span>{liveEvents.length} eventos detectados</span>
+            {isAnalyzing ? <span className="spinner" aria-label="Analisando" /> : null}
           </div>
+          <p className="auto-indicator">
+            ● {isAnalyzing ? "Analisando..." : lastAnalyzedAt ? `Ultima analise as ${formatClock(lastAnalyzedAt)}` : "Idle"}
+          </p>
           <div className="status-line">
             <p className="status-label">Estado do stream</p>
             <StatusBadge status={liveConnected ? "online" : "offline"} />
