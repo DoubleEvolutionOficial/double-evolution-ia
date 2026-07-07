@@ -96,25 +96,27 @@ export function IntelligenceDecisionCenter({
         </div>
       </article>
 
-      <article className="engines-panel" aria-label="Motores da IA">
-        <h4>Motores da IA</h4>
-        <div className="engines-grid">
-          {engineIndicators.map((indicator) => {
-            const value = Math.max(0, Math.min(100, indicator.value));
-            return (
-              <div className="engine-item" key={indicator.name}>
-                <div className="engine-item-head">
-                  <span>{indicator.name}</span>
-                  <strong>{value.toFixed(0)}%</strong>
+      {engineIndicators.length ? (
+        <article className="engines-panel" aria-label="Motores da IA">
+          <h4>Motores da IA</h4>
+          <div className="engines-grid">
+            {engineIndicators.map((indicator) => {
+              const value = Math.max(0, Math.min(100, indicator.value));
+              return (
+                <div className="engine-item" key={indicator.name}>
+                  <div className="engine-item-head">
+                    <span>{indicator.name}</span>
+                    <strong>{value.toFixed(0)}%</strong>
+                  </div>
+                  <div className="engine-track">
+                    <div className="engine-fill" style={{ width: `${value}%` }} />
+                  </div>
                 </div>
-                <div className="engine-track">
-                  <div className="engine-fill" style={{ width: `${value}%` }} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </article>
+              );
+            })}
+          </div>
+        </article>
+      ) : null}
 
       <article className="justifications-panel" aria-label="Justificativa amigavel">
         <h4>Justificativa</h4>

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
-import { JsonViewer } from "./components/JsonViewer";
 import { IntelligenceDecisionCenter } from "./components/IntelligenceDecisionCenter";
 import { Panel } from "./components/Panel";
 import { ReplayTimeline } from "./components/ReplayTimeline";
@@ -29,7 +28,12 @@ import {
 } from "./services/strategy/types";
 import { liveDataService } from "./services/live-data/liveDataService";
 import { storageService } from "./services/storage/storageService";
-import { PersistentStorageInfo } from "./services/storage/types";
+import {
+  BacktestRecord,
+  ManualSimulationRecord,
+  ManualSimulationState,
+  PersistentStorageInfo,
+} from "./services/storage/types";
 import {
   LiveDataEvent,
   LiveDataProviderStatus,
@@ -46,7 +50,10 @@ import { ManagedProviderId, ProviderManagerSnapshot } from "./services/provider-
 import "./App.css";
 
 type RequestState = "idle" | "loading" | "success" | "error" | "offline";
-type LabSpeed = 0.5 | 1 | 2 | 4;
+type LabSpeed = 1 | 2 | 5 | 10 | 20;
+type ImportFormat = "csv" | "json";
+type ManualEntryColor = "red" | "black" | "white";
+type ManualEntryResult = "WIN" | "LOSS" | "GALE 1" | "GALE 2";
 
 const LAB_PIPELINE_STAGES = [
   "Recebeu Evento",
@@ -60,7 +67,9 @@ const LAB_PIPELINE_STAGES = [
   "Decision",
 ] as const;
 
-const LAB_SPEED_OPTIONS: LabSpeed[] = [0.5, 1, 2, 4];
+const LAB_SPEED_OPTIONS: LabSpeed[] = [1, 2, 5, 10, 20];
+
+const BACKTEST_MIN_WINDOW = 6;
 
 const MAX_REPLAY_HISTORY = 500;
 
@@ -191,6 +200,129 @@ function eventColorLabel(color: "red" | "black" | "white"): string {
 
 function eventColorTone(color: "red" | "black" | "white"): "red" | "black" | "white" {
   return color;
+}
+
+function parseColor(value: unknown): "red" | "black" | "white" | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "red" || normalized === "vermelho") {
+    return "red";
+  }
+  if (normalized === "black" || normalized === "preto") {
+    return "black";
+  }
+  if (normalized === "white" || normalized === "branco") {
+    return "white";
+  }
+  return null;
+}
+
+function parseNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function parseTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString();
+}
+
+function inferColorFromNumber(number: number): "red" | "black" | "white" {
+  if (number === 0) {
+    return "white";
+  }
+  return number % 2 === 0 ? "black" : "red";
+}
+
+function normalizeImportedEvent(
+  raw: Record<string, unknown>,
+  previousEvents: LiveDataEvent[]
+): { event: LiveDataEvent | null; error: string | null } {
+  const rawNumber = parseNumber(raw.number ?? raw.numero ?? raw.n);
+  const rawColor = parseColor(raw.color ?? raw.cor);
+  const rawTimestamp = parseTimestamp(raw.timestamp ?? raw.time ?? raw.datetime ?? raw.datahora);
+
+  if (rawNumber === null || rawNumber < 0 || rawNumber > 14) {
+    return { event: null, error: "numero invalido" };
+  }
+
+  if (!rawTimestamp) {
+    return { event: null, error: "timestamp invalido" };
+  }
+
+  const derivedColor = inferColorFromNumber(rawNumber);
+  const color = rawColor ?? derivedColor;
+  if (rawNumber === 0 && color !== "white") {
+    return { event: null, error: "numero 0 deve ser branco" };
+  }
+
+  const previousColors = previousEvents.slice(-7).map((item) => item.color);
+  const sequence = [...previousColors, color];
+
+  return {
+    event: {
+      timestamp: rawTimestamp,
+      color,
+      number: rawNumber,
+      white: color === "white",
+      sequence,
+    },
+    error: null,
+  };
+}
+
+function parseCsvRows(content: string): Record<string, unknown>[] {
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    return [];
+  }
+
+  const separator = lines[0].includes(";") ? ";" : ",";
+  const headers = lines[0].split(separator).map((item) => item.trim().toLowerCase());
+
+  return lines.slice(1).map((line) => {
+    const columns = line.split(separator).map((item) => item.trim());
+    const row: Record<string, unknown> = {};
+    headers.forEach((header, index) => {
+      row[header] = columns[index] ?? "";
+    });
+    return row;
+  });
+}
+
+function manualDeltaByResult(result: ManualEntryResult): number {
+  if (result === "WIN") {
+    return 1;
+  }
+  if (result === "GALE 1") {
+    return 0.45;
+  }
+  if (result === "GALE 2") {
+    return 0.2;
+  }
+  return -1;
 }
 
 function mapTradingDecision(
@@ -515,6 +647,23 @@ function App() {
   const [isScanningPatterns, setIsScanningPatterns] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const [importedHistory, setImportedHistory] = useState<LiveDataEvent[]>([]);
+  const [importFormat, setImportFormat] = useState<ImportFormat>("csv");
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [lastImportTotal, setLastImportTotal] = useState(0);
+  const [replayCursor, setReplayCursor] = useState(0);
+  const [replaySpeed, setReplaySpeed] = useState<LabSpeed>(1);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const [backtestRecords, setBacktestRecords] = useState<BacktestRecord[]>([]);
+  const [isBacktesting, setIsBacktesting] = useState(false);
+  const [backtestMessage, setBacktestMessage] = useState<string | null>(null);
+  const [manualEntryColor, setManualEntryColor] = useState<ManualEntryColor>("red");
+  const [manualEntryResult, setManualEntryResult] = useState<ManualEntryResult>("WIN");
+  const [manualBankrollStart, setManualBankrollStart] = useState(100);
+  const [manualSimulationRecords, setManualSimulationRecords] = useState<ManualSimulationRecord[]>([]);
+  const [manualBankrollCurrent, setManualBankrollCurrent] = useState(100);
+  const [showHealthDetails, setShowHealthDetails] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState<
     "estatisticas" | "padroes" | "performance" | "replay" | "simulacao" | "logs"
   >("estatisticas");
