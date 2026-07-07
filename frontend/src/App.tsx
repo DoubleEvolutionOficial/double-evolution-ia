@@ -46,6 +46,21 @@ import { ManagedProviderId, ProviderManagerSnapshot } from "./services/provider-
 import "./App.css";
 
 type RequestState = "idle" | "loading" | "success" | "error" | "offline";
+type LabSpeed = 0.5 | 1 | 2 | 4;
+
+const LAB_PIPELINE_STAGES = [
+  "Recebeu Evento",
+  "Trend",
+  "Seasonality",
+  "Correlation",
+  "Consensus",
+  "Risk",
+  "Probability",
+  "Learning",
+  "Decision",
+] as const;
+
+const LAB_SPEED_OPTIONS: LabSpeed[] = [0.5, 1, 2, 4];
 
 const MAX_REPLAY_HISTORY = 500;
 
@@ -162,6 +177,20 @@ function providerStateLabel(value: "idle" | "connected" | "running" | "paused" |
     return "parado";
   }
   return "erro";
+}
+
+function eventColorLabel(color: "red" | "black" | "white"): string {
+  if (color === "red") {
+    return "Vermelho";
+  }
+  if (color === "black") {
+    return "Preto";
+  }
+  return "Branco";
+}
+
+function eventColorTone(color: "red" | "black" | "white"): "red" | "black" | "white" {
+  return color;
 }
 
 function mapTradingDecision(
@@ -489,6 +518,13 @@ function App() {
   const [activeBottomTab, setActiveBottomTab] = useState<
     "estatisticas" | "padroes" | "performance" | "replay" | "simulacao" | "logs"
   >("estatisticas");
+  const [isLabMode, setIsLabMode] = useState(true);
+  const [labCursor, setLabCursor] = useState(0);
+  const [isLabPlaying, setIsLabPlaying] = useState(false);
+  const [isLabLoopEnabled, setIsLabLoopEnabled] = useState(false);
+  const [labSpeed, setLabSpeed] = useState<LabSpeed>(1);
+  const [pipelineStepIndex, setPipelineStepIndex] = useState(0);
+  const [processingTimeMs, setProcessingTimeMs] = useState(0);
   const [providerSnapshot, setProviderSnapshot] = useState<ProviderManagerSnapshot>(() => {
     const activeProvider = providerManager.getActiveProvider();
     const providers = providerManager.getAllStatuses();
@@ -507,6 +543,7 @@ function App() {
   const performanceAnalyticsRef = useRef<PerformanceAnalyticsSnapshot>(
     createEmptyPerformanceAnalytics()
   );
+  const pipelineTimerRef = useRef<number | null>(null);
   const learningEngineRef = useRef(new LearningEngine());
   const patternDiscoveryEngineRef = useRef(new PatternDiscoveryEngine());
   const patternRankingEngineRef = useRef(new PatternRankingEngine());
@@ -735,6 +772,12 @@ function App() {
         return;
       }
 
+      if (isLabMode && providerName === "external") {
+        setAnalysisState("error");
+        setAnalysisError("LAB MODE ativo: use Simulator, Replay, CSV ou WebSocket.");
+        return;
+      }
+
       const streamEvents = liveDataService.getLatestEvents().slice(-24);
       const events = streamEvents.map(toLaboratoryEvent);
       if (!events.length) {
@@ -753,12 +796,14 @@ function App() {
       setIsAnalyzing(true);
       setAnalysisError(null);
       setAnalysisState("loading");
+      const startedAt = performance.now();
 
       try {
         const result = await analyzeLaboratory({ events });
         setAnalysis(result);
         setAnalysisState("success");
         setLastAnalyzedAt(new Date());
+        setProcessingTimeMs(Math.max(1, Math.round(performance.now() - startedAt)));
         lastAnalysisSignatureRef.current = signature;
         if (patternRanking.ranked_patterns.length || patternDiscovery.patterns.length) {
           runStrategySelection(strategyMode, manualStrategy);
@@ -767,6 +812,7 @@ function App() {
         const mapped = mapErrorToState(err);
         setAnalysisState(mapped.state);
         setAnalysisError(mapped.message);
+        setProcessingTimeMs(Math.max(1, Math.round(performance.now() - startedAt)));
       } finally {
         setIsAnalyzing(false);
         isAnalyzingRef.current = false;
@@ -784,9 +830,11 @@ function App() {
       }
     },
     [
+      isLabMode,
       manualStrategy,
       patternDiscovery.patterns.length,
       patternRanking.ranked_patterns.length,
+      providerName,
       runStrategySelection,
       strategyMode,
     ]
@@ -1170,6 +1218,140 @@ function App() {
 
   const managedProviders: ManagedProviderId[] = ["simulator", "replay", "csv", "websocket"];
   const activeManagedStatus = providerSnapshot.activeStatus;
+  const labEvents = useMemo(() => {
+    if (replayHistory.length) {
+      return replayHistory;
+    }
+    return liveEvents;
+  }, [liveEvents, replayHistory]);
+  const safeLabCursor = labEvents.length ? Math.max(0, Math.min(labCursor, labEvents.length - 1)) : 0;
+  const currentLabEvent = labEvents.length ? labEvents[safeLabCursor] : null;
+  const pipelineLastIndex = LAB_PIPELINE_STAGES.length - 1;
+  const scoreGeral = Number(
+    (
+      (trendValue + seasonalityValue + correlationValue + consensusValue + probabilityValue + learningValue) /
+      6
+    ).toFixed(1)
+  );
+  const debugStatus =
+    analysisState === "loading"
+      ? "processando"
+      : analysisState === "success"
+        ? "ativo"
+        : analysisState === "offline"
+          ? "offline"
+          : "aguardando";
+
+  useEffect(() => {
+    if (!labEvents.length) {
+      setLabCursor(0);
+      setIsLabPlaying(false);
+      return;
+    }
+
+    setLabCursor((previous) => Math.min(previous, labEvents.length - 1));
+  }, [labEvents.length]);
+
+  useEffect(() => {
+    if (!isLabPlaying || !labEvents.length) {
+      return;
+    }
+
+    const tickMs = Math.max(80, Math.round(900 / labSpeed));
+    const timer = window.setInterval(() => {
+      setLabCursor((previous) => {
+        if (previous >= labEvents.length - 1) {
+          if (isLabLoopEnabled) {
+            return 0;
+          }
+          setIsLabPlaying(false);
+          return previous;
+        }
+        return previous + 1;
+      });
+    }, tickMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isLabLoopEnabled, isLabPlaying, labEvents.length, labSpeed]);
+
+  useEffect(() => {
+    if (pipelineTimerRef.current !== null) {
+      window.clearInterval(pipelineTimerRef.current);
+      pipelineTimerRef.current = null;
+    }
+
+    if (!currentLabEvent) {
+      setPipelineStepIndex(0);
+      return;
+    }
+
+    setPipelineStepIndex(0);
+    let nextStep = 0;
+    const timer = window.setInterval(() => {
+      nextStep += 1;
+      if (nextStep >= LAB_PIPELINE_STAGES.length) {
+        setPipelineStepIndex(pipelineLastIndex);
+        window.clearInterval(timer);
+        pipelineTimerRef.current = null;
+        return;
+      }
+      setPipelineStepIndex(nextStep);
+    }, isAnalyzing || analysisState === "loading" ? 180 : 260);
+
+    pipelineTimerRef.current = timer;
+
+    return () => {
+      window.clearInterval(timer);
+      if (pipelineTimerRef.current === timer) {
+        pipelineTimerRef.current = null;
+      }
+    };
+  }, [analysisState, currentLabEvent, isAnalyzing, pipelineLastIndex, safeLabCursor]);
+
+  function handleLabPlay() {
+    if (!labEvents.length) {
+      return;
+    }
+
+    if (safeLabCursor >= labEvents.length - 1) {
+      setLabCursor(0);
+    }
+    setIsLabPlaying(true);
+  }
+
+  function handleLabPause() {
+    setIsLabPlaying(false);
+  }
+
+  function handleLabPreviousEvent() {
+    if (!labEvents.length) {
+      return;
+    }
+
+    setIsLabPlaying(false);
+    setLabCursor((previous) => {
+      if (previous <= 0) {
+        return isLabLoopEnabled ? labEvents.length - 1 : 0;
+      }
+      return previous - 1;
+    });
+  }
+
+  function handleLabNextEvent() {
+    if (!labEvents.length) {
+      return;
+    }
+
+    setIsLabPlaying(false);
+    setLabCursor((previous) => {
+      if (previous >= labEvents.length - 1) {
+        return isLabLoopEnabled ? 0 : previous;
+      }
+      return previous + 1;
+    });
+  }
 
   return (
     <main className="pro-dashboard">
@@ -1236,6 +1418,180 @@ function App() {
           </Panel>
 
           <div className="ia-column">
+            <Panel title="LAB MODE" subtitle="Laboratorio isolado para testes com Replay, Simulator, CSV e WebSocket">
+              <div className="lab-mode-row">
+                <label className="lab-mode-toggle" htmlFor="lab-mode-toggle">
+                  <input
+                    id="lab-mode-toggle"
+                    type="checkbox"
+                    checked={isLabMode}
+                    onChange={(event) => setIsLabMode(event.target.checked)}
+                  />
+                  <span>{isLabMode ? "Laboratorio ativo" : "Laboratorio inativo"}</span>
+                </label>
+                <span className={`lab-mode-pill ${isLabMode ? "lab-mode-pill-active" : "lab-mode-pill-inactive"}`}>
+                  {isLabMode ? "test environment" : "modo misto"}
+                </span>
+              </div>
+
+              <div className="lab-source-grid">
+                {managedProviders.map((provider) => {
+                  const itemStatus = providerSnapshot.providers[provider];
+                  const isActive = providerSnapshot.activeProvider === provider;
+                  return (
+                    <button
+                      key={provider}
+                      type="button"
+                      className={`lab-source-card ${isActive ? "lab-source-card-active" : ""}`}
+                      onClick={() => handleManagerProviderChange(provider)}
+                    >
+                      <strong>{managedProviderLabel(provider)}</strong>
+                      <span>{providerStateLabel(itemStatus.state)}</span>
+                      <small>{providerAvailabilityLabel(itemStatus.availability)}</small>
+                    </button>
+                  );
+                })}
+              </div>
+            </Panel>
+
+            <Panel title="Evento Atual" subtitle="Leitura do evento sob analise no laboratorio">
+              <div className="lab-event-grid">
+                <article className="lab-event-card">
+                  <span>Evento</span>
+                  <strong>{currentLabEvent ? `#${safeLabCursor + 1}` : "-"}</strong>
+                </article>
+                <article className="lab-event-card">
+                  <span>Horario</span>
+                  <strong>{currentLabEvent ? formatClock(new Date(currentLabEvent.timestamp)) : "-"}</strong>
+                </article>
+                <article className="lab-event-card">
+                  <span>Numero</span>
+                  <strong>{currentLabEvent ? currentLabEvent.number : "-"}</strong>
+                </article>
+                <article className="lab-event-card">
+                  <span>Cor</span>
+                  <strong
+                    className={`lab-event-color-${
+                      currentLabEvent ? eventColorTone(currentLabEvent.color) : "white"
+                    }`}
+                  >
+                    {currentLabEvent ? eventColorLabel(currentLabEvent.color) : "-"}
+                  </strong>
+                </article>
+                <article className="lab-event-card">
+                  <span>Branco</span>
+                  <strong>{currentLabEvent ? (currentLabEvent.white ? "Sim" : "Nao") : "-"}</strong>
+                </article>
+                <article className="lab-event-card lab-event-card-sequence">
+                  <span>Sequencia</span>
+                  <strong>
+                    {currentLabEvent && currentLabEvent.sequence.length
+                      ? currentLabEvent.sequence.slice(-8).join(" > ")
+                      : "-"}
+                  </strong>
+                </article>
+              </div>
+            </Panel>
+
+            <Panel title="Pipeline" subtitle="Estado da IA em tempo real durante o processamento">
+              <div className="lab-pipeline-flow" aria-label="Pipeline horizontal do laboratorio">
+                {LAB_PIPELINE_STAGES.map((stage, index) => {
+                  const tone =
+                    index === pipelineStepIndex ? "active" : index < pipelineStepIndex ? "done" : "idle";
+                  return (
+                    <div className="lab-pipeline-node-wrap" key={stage}>
+                      <article className={`lab-pipeline-node lab-pipeline-node-${tone}`}>
+                        <span>{stage}</span>
+                      </article>
+                      {index < pipelineLastIndex ? <span className="lab-pipeline-arrow">→</span> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+
+            <Panel title="Painel de Debug" subtitle="Apenas metricas operacionais, sem exibicao de regras internas">
+              <div className="lab-debug-grid">
+                <article className="lab-debug-card">
+                  <span>tempo processamento</span>
+                  <strong>{processingTimeMs ? `${processingTimeMs} ms` : "-"}</strong>
+                </article>
+                <article className="lab-debug-card">
+                  <span>score geral</span>
+                  <strong>{scoreGeral.toFixed(1)}%</strong>
+                </article>
+                <article className="lab-debug-card">
+                  <span>confianca</span>
+                  <strong>{confidencePercent.toFixed(1)}%</strong>
+                </article>
+                <article className="lab-debug-card">
+                  <span>risco</span>
+                  <strong>{riskPercent.toFixed(1)}%</strong>
+                </article>
+                <article className="lab-debug-card">
+                  <span>status</span>
+                  <strong>{debugStatus}</strong>
+                </article>
+              </div>
+            </Panel>
+
+            <Panel title="Controles" subtitle="Play, Pause, navegacao de evento, velocidade e loop">
+              <div className="lab-controls-row">
+                <button className="analyze-button" type="button" onClick={handleLabPlay} disabled={!labEvents.length}>
+                  Play
+                </button>
+                <button className="analyze-button" type="button" onClick={handleLabPause}>
+                  Pause
+                </button>
+                <button
+                  className="analyze-button"
+                  type="button"
+                  onClick={handleLabNextEvent}
+                  disabled={!labEvents.length}
+                >
+                  Proximo Evento
+                </button>
+                <button
+                  className="analyze-button"
+                  type="button"
+                  onClick={handleLabPreviousEvent}
+                  disabled={!labEvents.length}
+                >
+                  Evento Anterior
+                </button>
+              </div>
+
+              <div className="lab-controls-row">
+                <label className="provider-select">
+                  Velocidade
+                  <select
+                    value={String(labSpeed)}
+                    onChange={(event) => setLabSpeed(Number(event.target.value) as LabSpeed)}
+                  >
+                    {LAB_SPEED_OPTIONS.map((speed) => (
+                      <option key={speed} value={speed}>
+                        {speed}x
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="lab-loop-toggle" htmlFor="lab-loop-toggle">
+                  <input
+                    id="lab-loop-toggle"
+                    type="checkbox"
+                    checked={isLabLoopEnabled}
+                    onChange={(event) => setIsLabLoopEnabled(event.target.checked)}
+                  />
+                  <span>Loop</span>
+                </label>
+
+                <span className="lab-cursor-meta">
+                  Evento atual: {labEvents.length ? `${safeLabCursor + 1}/${labEvents.length}` : "0/0"}
+                </span>
+              </div>
+            </Panel>
+
             <IntelligenceDecisionCenter
               status={centerStatus}
               suggestedColor={suggestedColor}
