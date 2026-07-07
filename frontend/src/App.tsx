@@ -3,6 +3,7 @@ import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
 import { JsonViewer } from "./components/JsonViewer";
 import { Panel } from "./components/Panel";
+import { StonesGrid } from "./components/StonesGrid";
 import { StatusBadge } from "./components/StatusBadge";
 import { LearningEngine } from "./services/learning/learningEngine";
 import { LearningSnapshot } from "./services/learning/types";
@@ -29,6 +30,7 @@ import { storageService } from "./services/storage/storageService";
 import { PersistentStorageInfo } from "./services/storage/types";
 import {
   LiveDataEvent,
+  LiveDataProviderStatus,
   LiveDataProviderName,
   SimulatorSpeed,
 } from "./services/live-data/types";
@@ -92,6 +94,35 @@ function toLaboratoryEvent(event: LiveDataEvent): LaboratoryEvent {
 
 function formatClock(time: Date): string {
   return time.toLocaleTimeString("pt-BR", { hour12: false });
+}
+
+function providerLabel(provider: LiveDataProviderName): string {
+  if (provider === "mock") {
+    return "Mock";
+  }
+  if (provider === "manual") {
+    return "Manual";
+  }
+  if (provider === "simulator") {
+    return "Simulator";
+  }
+  if (provider === "external") {
+    return "External";
+  }
+  return "WebSocket";
+}
+
+function providerStatusLabel(status: LiveDataProviderStatus): string {
+  if (status.state === "not_configured") {
+    return "WebSocket não configurado";
+  }
+  if (status.state === "reconnecting") {
+    return "reconnecting";
+  }
+  if (status.state === "online") {
+    return "online";
+  }
+  return "offline";
 }
 
 function createEmptyLearning(): LearningSnapshot {
@@ -259,6 +290,9 @@ function App() {
   );
   const [liveConnected, setLiveConnected] = useState(liveDataService.isConnected());
   const [liveEvents, setLiveEvents] = useState<LiveDataEvent[]>(liveDataService.getLatestEvents());
+  const [providerStatus, setProviderStatus] = useState<LiveDataProviderStatus>(
+    liveDataService.getProviderStatus()
+  );
   const [analysis, setAnalysis] = useState<LaboratoryAnalyzeResponse | null>(
     null
   );
@@ -632,6 +666,7 @@ function App() {
       setLiveEvents(events);
       setLiveConnected(liveDataService.isConnected());
       setProviderName(liveDataService.getProviderName());
+      setProviderStatus(liveDataService.getProviderStatus());
 
       if (events.length >= lastIngestedIndexRef.current) {
         const newEvents = events.slice(lastIngestedIndexRef.current);
@@ -685,11 +720,13 @@ function App() {
     }
     setLiveConnected(liveDataService.isConnected());
     setLiveEvents(liveDataService.getLatestEvents());
+    setProviderStatus(liveDataService.getProviderStatus());
   }
 
   function handleDisconnectLiveData() {
     liveDataService.disconnect();
     setLiveConnected(liveDataService.isConnected());
+    setProviderStatus(liveDataService.getProviderStatus());
   }
 
   function handleProviderChange(name: LiveDataProviderName) {
@@ -701,6 +738,7 @@ function App() {
     setProviderName(liveDataService.getProviderName());
     setLiveConnected(liveDataService.isConnected());
     setLiveEvents(liveDataService.getLatestEvents());
+    setProviderStatus(liveDataService.getProviderStatus());
     learningEngineRef.current = new LearningEngine();
     lastIngestedIndexRef.current = 0;
     setLearning(createEmptyLearning());
@@ -716,16 +754,19 @@ function App() {
     liveDataService.startSimulator?.();
     setLiveConnected(liveDataService.isConnected());
     setLiveEvents(liveDataService.getLatestEvents());
+    setProviderStatus(liveDataService.getProviderStatus());
   }
 
   function handleSimulatorPause() {
     liveDataService.pauseSimulator?.();
     setLiveConnected(liveDataService.isConnected());
+    setProviderStatus(liveDataService.getProviderStatus());
   }
 
   function handleSimulatorReset() {
     liveDataService.resetSimulator?.();
     setLiveEvents(liveDataService.getLatestEvents());
+    setProviderStatus(liveDataService.getProviderStatus());
   }
 
   async function handleCheckHealth() {
@@ -1006,50 +1047,8 @@ function App() {
         </header>
 
         <section className="center-zone">
-          <Panel title="Painel das Pedras" subtitle="Layout preparado para stream, grade, timeline, zoom e filtros">
-            <div className="stones-last-results">
-              {liveEvents.slice(-24).map((event) => (
-                <span
-                  key={`${event.timestamp}-${event.number}`}
-                  className={`stone-pill stone-${event.color}`}
-                  title={`${event.color} #${event.number}`}
-                >
-                  {event.number}
-                </span>
-              ))}
-              {!liveEvents.length ? (
-                <p className="empty-state">Sem eventos ainda para a linha de ultimos resultados.</p>
-              ) : null}
-            </div>
-
-            <div className="stones-viewport horizontal-scroll">
-              <div className="stones-grid">
-                {Array.from({ length: 96 }, (_, index) => (
-                  <div className="stone-cell" key={`stone-cell-${index}`}>
-                    <span>{index + 1}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="stones-workbench">
-              <div className="bench-card vertical-scroll">
-                <h4>Timeline</h4>
-                <p>Area reservada para timeline interativa com scroll vertical.</p>
-              </div>
-              <div className="bench-card">
-                <h4>Zoom</h4>
-                <p>Area reservada para controles de zoom e navegacao.</p>
-              </div>
-              <div className="bench-card">
-                <h4>Filtros</h4>
-                <p>Area reservada para filtros de periodo, cor e padroes.</p>
-              </div>
-              <div className="bench-card">
-                <h4>Heatmap</h4>
-                <p>Area reservada para mapa de calor da grade de pedras.</p>
-              </div>
-            </div>
+          <Panel title="Painel das Pedras" subtitle="Grid profissional com atualizacao automatica por evento">
+            <StonesGrid events={liveEvents} />
           </Panel>
 
           <div className="ia-column">
@@ -1071,6 +1070,22 @@ function App() {
                 <p className="status-label">Estado do stream</p>
                 <StatusBadge status={liveConnected ? "online" : "offline"} />
               </div>
+              <div className="status-line">
+                <p className="status-label">Status da conexao</p>
+                <StatusBadge status={providerStatusLabel(providerStatus)} />
+              </div>
+              <div className="status-line">
+                <p className="status-label">Log de conexao</p>
+                <p className="status-label">{providerStatus.message}</p>
+              </div>
+              <div className="status-line">
+                <p className="status-label">Ultima mensagem recebida</p>
+                <p className="status-label">
+                  {providerStatus.lastMessageAt
+                    ? `${formatClock(new Date(providerStatus.lastMessageAt))} - ${providerStatus.lastMessage ?? "mensagem recebida"}`
+                    : "Sem mensagens"}
+                </p>
+              </div>
 
               {analysisError ? <p className="error-text">{analysisError}</p> : null}
             </Panel>
@@ -1087,7 +1102,7 @@ function App() {
                   >
                     {availableProviders.map((name) => (
                       <option key={name} value={name}>
-                        {name.toUpperCase()}
+                        {providerLabel(name)}
                       </option>
                     ))}
                   </select>

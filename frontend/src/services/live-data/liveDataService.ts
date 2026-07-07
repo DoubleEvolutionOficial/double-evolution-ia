@@ -3,6 +3,7 @@ import {
   LiveDataEvent,
   LiveDataProviderName,
   LiveDataProviderContract,
+  LiveDataProviderStatus,
   LiveDataServiceContract,
   SimulatorSpeed,
 } from "./types";
@@ -10,6 +11,7 @@ import { MockDataProvider } from "./providers/mockLiveDataProvider";
 import { ManualDataProvider } from "./providers/manualDataProvider";
 import { ExternalDataProvider } from "./providers/externalDataProvider";
 import { RealisticSimulatorProvider } from "./providers/realisticSimulatorProvider";
+import { WebSocketDataProvider } from "./providers/webSocketDataProvider";
 
 type ProviderMap = Record<LiveDataProviderName, LiveDataProviderContract>;
 
@@ -34,6 +36,11 @@ export class LiveDataService implements LiveDataServiceContract {
           url: import.meta.env.VITE_EXTERNAL_DATA_URL,
         }),
       simulator: providers.simulator ?? new RealisticSimulatorProvider(),
+      websocket:
+        providers.websocket ??
+        new WebSocketDataProvider({
+          url: import.meta.env.VITE_WS_PROVIDER_URL,
+        }),
     };
 
     this.currentProviderName = initialProviderName;
@@ -73,7 +80,23 @@ export class LiveDataService implements LiveDataServiceContract {
   }
 
   getAvailableProviders(): LiveDataProviderName[] {
-    return ["mock", "manual", "external", "simulator"];
+    return ["mock", "manual", "simulator", "external", "websocket"];
+  }
+
+  getProviderStatus(): LiveDataProviderStatus {
+    const providerStatus = this.currentProvider.getStatus?.();
+    if (providerStatus) {
+      return providerStatus;
+    }
+
+    return {
+      state: this.currentProvider.isConnected() ? "online" : "offline",
+      message: this.currentProvider.isConnected() ? "Conectado" : "Desconectado",
+      lastMessage: null,
+      lastMessageAt: null,
+      reconnectAttempts: 0,
+      maxReconnectAttempts: null,
+    };
   }
 
   setProvider(name: LiveDataProviderName): void {
