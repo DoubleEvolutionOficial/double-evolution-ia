@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
 import { JsonViewer } from "./components/JsonViewer";
+import { IntelligenceDecisionCenter } from "./components/IntelligenceDecisionCenter";
 import { Panel } from "./components/Panel";
 import { ReplayTimeline } from "./components/ReplayTimeline";
 import { StonesGrid } from "./components/StonesGrid";
@@ -119,19 +120,6 @@ function providerLabel(provider: LiveDataProviderName): string {
   return "WebSocket";
 }
 
-function providerStatusLabel(status: LiveDataProviderStatus): string {
-  if (status.state === "not_configured") {
-    return "WebSocket não configurado";
-  }
-  if (status.state === "reconnecting") {
-    return "reconnecting";
-  }
-  if (status.state === "online") {
-    return "online";
-  }
-  return "offline";
-}
-
 function mapTradingDecision(
   confidence: number,
   risk: number,
@@ -152,16 +140,125 @@ function mapTradingDecision(
   return "Aguardar";
 }
 
-function protectedExplanation(decision: "Aguardar" | "Observar" | "Entrar"): string {
-  if (decision === "Entrar") {
-    return "Sinais agregados estao favoraveis. Acompanhe com gestao de risco e confirme o contexto ao vivo.";
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+function toPercent(value: number): number {
+  if (value >= 0 && value <= 1) {
+    return clampPercent(value * 100);
+  }
+  return clampPercent(value);
+}
+
+function pickNumericMetric(record: Record<string, unknown> | null | undefined, keys: string[]): number | null {
+  if (!record) {
+    return null;
   }
 
-  if (decision === "Observar") {
-    return "Cenario em transicao. Aguarde mais confirmacoes antes de qualquer acao operacional.";
+  for (const key of keys) {
+    const current = record[key];
+    if (typeof current === "number" && Number.isFinite(current)) {
+      return current;
+    }
+    if (typeof current === "string") {
+      const parsed = Number.parseFloat(current.replace("%", "").trim());
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
   }
 
-  return "Momento defensivo. O sistema recomenda paciencia ate aparecer uma janela mais consistente.";
+  return null;
+}
+
+function computeLongestColorStreak(events: LiveDataEvent[]): number {
+  if (!events.length) {
+    return 0;
+  }
+
+  let max = 1;
+  let current = 1;
+
+  for (let index = 1; index < events.length; index += 1) {
+    if (events[index].color === events[index - 1].color) {
+      current += 1;
+      if (current > max) {
+        max = current;
+      }
+    } else {
+      current = 1;
+    }
+  }
+
+  return max;
+}
+
+function mapDecisionStatus(
+  confidence: number,
+  risk: number,
+  connected: boolean
+): "Observando" | "Preparando Entrada" | "Entrada Confirmada" | "Aguardar" {
+  if (!connected) {
+    return "Aguardar";
+  }
+
+  if (confidence >= 78 && risk <= 35) {
+    return "Entrada Confirmada";
+  }
+
+  if (confidence >= 62 && risk <= 52) {
+    return "Preparando Entrada";
+  }
+
+  if (confidence >= 44) {
+    return "Observando";
+  }
+
+  return "Aguardar";
+}
+
+function mapRiskLabel(riskPercent: number): "Muito baixo" | "Baixo" | "Médio" | "Alto" | "Muito alto" {
+  if (riskPercent <= 20) {
+    return "Muito baixo";
+  }
+  if (riskPercent <= 40) {
+    return "Baixo";
+  }
+  if (riskPercent <= 60) {
+    return "Médio";
+  }
+  if (riskPercent <= 80) {
+    return "Alto";
+  }
+  return "Muito alto";
+}
+
+function suggestColor(events: LiveDataEvent[]): "Preto" | "Vermelho" | "Branco" {
+  const recent = events.slice(-20);
+  if (!recent.length) {
+    return "Branco";
+  }
+
+  let red = 0;
+  let black = 0;
+  let white = 0;
+  recent.forEach((event) => {
+    if (event.color === "red") {
+      red += 1;
+    }
+    if (event.color === "black") {
+      black += 1;
+    }
+    if (event.color === "white") {
+      white += 1;
+    }
+  });
+
+  if (white >= red && white >= black) {
+    return "Branco";
+  }
+  return red >= black ? "Vermelho" : "Preto";
 }
 
 function createEmptyLearning(): LearningSnapshot {
@@ -903,26 +1000,88 @@ function App() {
     performanceAnalytics.average_risk,
     liveConnected
   );
-  const protectedDecisionText = protectedExplanation(tradingDecision);
   const headerStatus =
     healthState === "success" ? health?.status ?? "online" : requestStateLabel(healthState);
 
-  const aiCards = [
-    { label: "Decisao", value: tradingDecision },
-    { label: "Confidence", value: headerConfidence },
-    { label: "Risk", value: `${performanceAnalytics.average_risk.toFixed(1)}%` },
-    { label: "Trend", value: pickMetric(analysis?.trend, ["direction", "trend", "status"]) },
-    {
-      label: "Probability",
-      value: pickMetric(analysis?.probability, ["probability", "chance", "score"]),
-    },
-    { label: "Consensus", value: pickMetric(analysis?.consensus, ["decision", "status", "signal"]) },
-    {
-      label: "Correlation",
-      value: pickMetric(analysis?.correlation, ["correlation", "strength", "pair"]),
-    },
-    { label: "Learning", value: String(learning.learning_score) },
+  const confidencePercent = clampPercent(performanceAnalytics.average_confidence);
+  const riskPercent = clampPercent(performanceAnalytics.average_risk);
+  const trendValue = toPercent(
+    pickNumericMetric(analysis?.trend, ["strength", "score", "trend_strength", "confidence", "value"]) ??
+      confidencePercent * 0.75
+  );
+  const probabilityValue = toPercent(
+    pickNumericMetric(analysis?.probability, ["probability", "chance", "score", "confidence"]) ??
+      confidencePercent
+  );
+  const correlationValue = toPercent(
+    pickNumericMetric(analysis?.correlation, ["correlation", "strength", "score", "confidence"]) ?? 50
+  );
+  const consensusValue = toPercent(
+    pickNumericMetric(analysis?.consensus, ["consensus", "score", "confidence", "agreement"]) ??
+      confidencePercent * 0.86
+  );
+  const seasonalityValue = toPercent(
+    pickNumericMetric(analysis?.seasonality, ["seasonality", "score", "confidence", "intensity"]) ?? 52
+  );
+  const learningValue = clampPercent(learning.learning_score);
+  const accuracyValue = clampPercent(performanceAnalytics.overall_accuracy);
+  const centerStatus = mapDecisionStatus(confidencePercent, riskPercent, liveConnected);
+  const riskLabel = mapRiskLabel(riskPercent);
+  const suggestedColor = suggestColor(liveEvents);
+
+  const engineIndicators = [
+    { name: "Trend", value: trendValue },
+    { name: "Probability", value: probabilityValue },
+    { name: "Correlation", value: correlationValue },
+    { name: "Consensus", value: consensusValue },
+    { name: "Seasonality", value: seasonalityValue },
+    { name: "Risk", value: riskPercent },
+    { name: "Learning", value: learningValue },
+    { name: "Confidence", value: confidencePercent },
+    { name: "Accuracy", value: accuracyValue },
   ];
+
+  const decisionJustifications = useMemo(() => {
+    const phrases: string[] = [];
+
+    if (centerStatus === "Entrada Confirmada") {
+      phrases.push("Confluencia elevada.");
+    }
+    if (centerStatus === "Preparando Entrada") {
+      phrases.push("Aguardar confirmacao.");
+    }
+    if (centerStatus === "Observando") {
+      phrases.push("Mercado lateral.");
+    }
+    if (probabilityValue >= 68) {
+      phrases.push("Alta probabilidade.");
+    }
+    if (confidencePercent < 48) {
+      phrases.push("Baixa confianca.");
+    }
+    if (seasonalityValue >= 58) {
+      phrases.push("Regime favoravel.");
+    }
+    if (computeLongestColorStreak(liveEvents.slice(-36)) >= 4) {
+      phrases.push("Sequencia consistente.");
+    }
+    if (!liveConnected) {
+      phrases.push("Aguardar confirmacao.");
+    }
+
+    const unique = Array.from(new Set(phrases));
+    if (!unique.length) {
+      return ["Aguardar confirmacao."];
+    }
+    return unique.slice(0, 4);
+  }, [
+    centerStatus,
+    confidencePercent,
+    liveConnected,
+    liveEvents,
+    probabilityValue,
+    seasonalityValue,
+  ]);
 
   return (
     <main className="pro-dashboard">
@@ -989,47 +1148,15 @@ function App() {
           </Panel>
 
           <div className="ia-column">
-            <Panel title="Painel da IA" subtitle="Cards de decisao e inteligencia em tempo real">
-              <div className="ia-cards-grid">
-                {aiCards.map((card) => (
-                  <article className="ia-card" key={card.label}>
-                    <span>{card.label}</span>
-                    <strong>{card.value}</strong>
-                  </article>
-                ))}
-              </div>
-
-              <div className="status-line">
-                <p className="status-label">Estado da analise</p>
-                <StatusBadge status={requestStateLabel(analysisState)} />
-              </div>
-              <div className="status-line">
-                <p className="status-label">Estado do stream</p>
-                <StatusBadge status={liveConnected ? "online" : "offline"} />
-              </div>
-              <div className="status-line">
-                <p className="status-label">Status da conexao</p>
-                <StatusBadge status={providerStatusLabel(providerStatus)} />
-              </div>
-              <div className="status-line">
-                <p className="status-label">Log de conexao</p>
-                <p className="status-label">{providerStatus.message}</p>
-              </div>
-              <div className="status-line">
-                <p className="status-label">Ultima mensagem recebida</p>
-                <p className="status-label">
-                  {providerStatus.lastMessageAt
-                    ? `${formatClock(new Date(providerStatus.lastMessageAt))} - ${providerStatus.lastMessage ?? "mensagem recebida"}`
-                    : "Sem mensagens"}
-                </p>
-              </div>
-              <div className="protected-explanation">
-                <p className="protected-explanation-title">Explicacao protegida</p>
-                <p>{protectedDecisionText}</p>
-              </div>
-
-              {analysisError ? <p className="error-text">{analysisError}</p> : null}
-            </Panel>
+            <IntelligenceDecisionCenter
+              status={centerStatus}
+              suggestedColor={suggestedColor}
+              confidence={confidencePercent}
+              riskLabel={riskLabel}
+              engineIndicators={engineIndicators}
+              justifications={decisionJustifications}
+              streamStatus={liveConnected ? "online" : "offline"}
+            />
 
             <Panel title="Controle Operacional" subtitle="Sem novas funcionalidades, apenas comandos existentes">
               <div className="action-row">
