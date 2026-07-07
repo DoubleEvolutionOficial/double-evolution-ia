@@ -41,6 +41,8 @@ import {
   LaboratoryEvent,
   LaboratoryHealth,
 } from "./types/laboratory";
+import { providerManager } from "./services/provider-manager/providerManager";
+import { ManagedProviderId, ProviderManagerSnapshot } from "./services/provider-manager/types";
 import "./App.css";
 
 type RequestState = "idle" | "loading" | "success" | "error" | "offline";
@@ -118,6 +120,48 @@ function providerLabel(provider: LiveDataProviderName): string {
     return "External";
   }
   return "WebSocket";
+}
+
+function managedProviderLabel(provider: ManagedProviderId): string {
+  if (provider === "simulator") {
+    return "Simulator";
+  }
+  if (provider === "replay") {
+    return "Replay";
+  }
+  if (provider === "csv") {
+    return "CSV";
+  }
+  return "WebSocket";
+}
+
+function providerAvailabilityLabel(value: "available" | "coming_soon" | "unavailable"): string {
+  if (value === "available") {
+    return "disponivel";
+  }
+  if (value === "coming_soon") {
+    return "estrutura pronta";
+  }
+  return "indisponivel";
+}
+
+function providerStateLabel(value: "idle" | "connected" | "running" | "paused" | "stopped" | "error"): string {
+  if (value === "idle") {
+    return "idle";
+  }
+  if (value === "connected") {
+    return "conectado";
+  }
+  if (value === "running") {
+    return "executando";
+  }
+  if (value === "paused") {
+    return "pausado";
+  }
+  if (value === "stopped") {
+    return "parado";
+  }
+  return "erro";
 }
 
 function mapTradingDecision(
@@ -445,6 +489,15 @@ function App() {
   const [activeBottomTab, setActiveBottomTab] = useState<
     "estatisticas" | "padroes" | "performance" | "replay" | "simulacao" | "logs"
   >("estatisticas");
+  const [providerSnapshot, setProviderSnapshot] = useState<ProviderManagerSnapshot>(() => {
+    const activeProvider = providerManager.getActiveProvider();
+    const providers = providerManager.getAllStatuses();
+    return {
+      activeProvider,
+      activeStatus: providers[activeProvider],
+      providers,
+    };
+  });
 
   const debounceTimerRef = useRef<number | null>(null);
   const isAnalyzingRef = useRef(false);
@@ -460,6 +513,14 @@ function App() {
   const performanceAnalyticsEngineRef = useRef(new PerformanceAnalytics());
   const strategyEngineRef = useRef(new StrategyEngine());
   const replaySeenKeysRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const unsubscribe = providerManager.subscribe((snapshot) => {
+      setProviderSnapshot(snapshot);
+    });
+
+    return unsubscribe;
+  }, []);
 
   const appendReplayHistory = useCallback((events: LiveDataEvent[]) => {
     if (!events.length) {
@@ -908,6 +969,30 @@ function App() {
     setProviderStatus(liveDataService.getProviderStatus());
   }
 
+  function handleManagerProviderChange(nextProvider: ManagedProviderId) {
+    providerManager.setActiveProvider(nextProvider);
+  }
+
+  function handleManagerConnect() {
+    providerManager.connect();
+  }
+
+  function handleManagerDisconnect() {
+    providerManager.disconnect();
+  }
+
+  function handleManagerStart() {
+    providerManager.start();
+  }
+
+  function handleManagerPause() {
+    providerManager.pause();
+  }
+
+  function handleManagerReset() {
+    providerManager.reset();
+  }
+
   async function handleCheckHealth() {
     setIsCheckingHealth(true);
     setHealthError(null);
@@ -1083,6 +1168,9 @@ function App() {
     seasonalityValue,
   ]);
 
+  const managedProviders: ManagedProviderId[] = ["simulator", "replay", "csv", "websocket"];
+  const activeManagedStatus = providerSnapshot.activeStatus;
+
   return (
     <main className="pro-dashboard">
       <aside className="sidebar">
@@ -1239,6 +1327,70 @@ function App() {
                     </button>
                   </>
                 ) : null}
+              </div>
+
+              <div className="provider-manager-panel">
+                <div className="status-line">
+                  <p className="status-label">Provider ativo (manager)</p>
+                  <p className="status-label">{managedProviderLabel(providerSnapshot.activeProvider)}</p>
+                </div>
+                <div className="status-line">
+                  <p className="status-label">Estado</p>
+                  <p className="status-label">{providerStateLabel(activeManagedStatus.state)}</p>
+                </div>
+                <div className="status-line">
+                  <p className="status-label">Disponibilidade</p>
+                  <p className="status-label">
+                    {providerAvailabilityLabel(activeManagedStatus.availability)}
+                  </p>
+                </div>
+
+                <div className="action-row">
+                  <label className="provider-select">
+                    Fonte (manager)
+                    <select
+                      value={providerSnapshot.activeProvider}
+                      onChange={(event) =>
+                        handleManagerProviderChange(event.target.value as ManagedProviderId)
+                      }
+                    >
+                      {managedProviders.map((provider) => (
+                        <option key={provider} value={provider}>
+                          {managedProviderLabel(provider)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <button className="analyze-button" type="button" onClick={handleManagerConnect}>
+                    Connect
+                  </button>
+                  <button className="analyze-button" type="button" onClick={handleManagerDisconnect}>
+                    Disconnect
+                  </button>
+                  <button className="analyze-button" type="button" onClick={handleManagerStart}>
+                    Start
+                  </button>
+                  <button className="analyze-button" type="button" onClick={handleManagerPause}>
+                    Pause
+                  </button>
+                  <button className="analyze-button" type="button" onClick={handleManagerReset}>
+                    Reset
+                  </button>
+                </div>
+
+                <div className="provider-availability-grid">
+                  {managedProviders.map((provider) => {
+                    const itemStatus = providerSnapshot.providers[provider];
+                    return (
+                      <article className="provider-availability-card" key={provider}>
+                        <strong>{managedProviderLabel(provider)}</strong>
+                        <span>{providerStateLabel(itemStatus.state)}</span>
+                        <span>{providerAvailabilityLabel(itemStatus.availability)}</span>
+                      </article>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="status-line">

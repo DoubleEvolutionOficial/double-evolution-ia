@@ -716,6 +716,39 @@ body {
   gap: 0.55rem;
 }
 
+.provider-manager-panel {
+  margin-top: 0.75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.62rem;
+}
+
+.provider-availability-grid {
+  margin-top: 0.6rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.44rem;
+}
+
+.provider-availability-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.42rem 0.5rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.provider-availability-card strong {
+  font-size: 0.76rem;
+}
+
+.provider-availability-card span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
 .provider-select {
   display: inline-flex;
   flex-direction: column;
@@ -1416,6 +1449,10 @@ body {
 
   .decision-hero-main,
   .engines-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-availability-grid {
     grid-template-columns: 1fr;
   }
 
