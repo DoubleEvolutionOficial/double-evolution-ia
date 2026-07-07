@@ -125,6 +125,38 @@ function providerStatusLabel(status: LiveDataProviderStatus): string {
   return "offline";
 }
 
+function mapTradingDecision(
+  confidence: number,
+  risk: number,
+  connected: boolean
+): "Aguardar" | "Observar" | "Entrar" {
+  if (!connected) {
+    return "Aguardar";
+  }
+
+  if (confidence >= 74 && risk <= 42) {
+    return "Entrar";
+  }
+
+  if (confidence >= 58 && risk <= 62) {
+    return "Observar";
+  }
+
+  return "Aguardar";
+}
+
+function protectedExplanation(decision: "Aguardar" | "Observar" | "Entrar"): string {
+  if (decision === "Entrar") {
+    return "Sinais agregados estao favoraveis. Acompanhe com gestao de risco e confirme o contexto ao vivo.";
+  }
+
+  if (decision === "Observar") {
+    return "Cenario em transicao. Aguarde mais confirmacoes antes de qualquer acao operacional.";
+  }
+
+  return "Momento defensivo. O sistema recomenda paciencia ate aparecer uma janela mais consistente.";
+}
+
 function createEmptyLearning(): LearningSnapshot {
   return {
     learning_score: 0,
@@ -221,25 +253,6 @@ function createEmptyPerformanceAnalytics(): PerformanceAnalyticsSnapshot {
   };
 }
 
-function buildSparkline(points: Array<{ value: number }>, width = 320, height = 84): string {
-  if (!points.length) {
-    return "";
-  }
-
-  if (points.length === 1) {
-    const y = height - (Math.max(0, Math.min(100, points[0].value)) / 100) * height;
-    return `0,${y.toFixed(2)} ${width},${y.toFixed(2)}`;
-  }
-
-  return points
-    .map((point, index) => {
-      const x = (index / (points.length - 1)) * width;
-      const y = height - (Math.max(0, Math.min(100, point.value)) / 100) * height;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-}
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -324,15 +337,9 @@ function App() {
   const [isScanningPatterns, setIsScanningPatterns] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
-  const [filterElite, setFilterElite] = useState(false);
-  const [filterHighConfidence, setFilterHighConfidence] = useState(false);
-  const [filterActive, setFilterActive] = useState(false);
-  const [filterRecent, setFilterRecent] = useState(false);
-  const [sortBy, setSortBy] = useState<
-    "score" | "confidence" | "accuracy" | "occurrences" | "recent"
-  >("score");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [activeBottomTab, setActiveBottomTab] = useState<
+    "estatisticas" | "padroes" | "performance" | "replay" | "simulacao" | "logs"
+  >("estatisticas");
 
   const debounceTimerRef = useRef<number | null>(null);
   const isAnalyzingRef = useRef(false);
@@ -454,16 +461,6 @@ function App() {
   useEffect(() => {
     performanceAnalyticsRef.current = performanceAnalytics;
   }, [performanceAnalytics]);
-
-  useEffect(() => {
-    const timerId = window.setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-
-    return () => {
-      window.clearInterval(timerId);
-    };
-  }, []);
 
   const runPerformanceAnalytics = useCallback(
     (nextStrategy?: StrategyResult, nextStrategyHistory?: StrategyDecision[]) => {
@@ -842,114 +839,6 @@ function App() {
     }
   }
 
-  const rankedPatterns = useMemo(() => {
-    const now = Date.now();
-    const recentThresholdMs = 5 * 60 * 1000;
-
-    const filtered = patternRanking.ranked_patterns.filter((pattern) => {
-      if (filterElite && pattern.rank !== "Elite") {
-        return false;
-      }
-      if (filterHighConfidence && pattern.confidence < 80) {
-        return false;
-      }
-      if (filterActive && pattern.status !== "active") {
-        return false;
-      }
-      if (filterRecent) {
-        if (!pattern.last_seen) {
-          return false;
-        }
-        const ts = Date.parse(pattern.last_seen);
-        if (Number.isNaN(ts) || now - ts > recentThresholdMs) {
-          return false;
-        }
-      }
-      return true;
-    });
-
-    const multiplier = sortDirection === "asc" ? 1 : -1;
-    filtered.sort((a, b) => {
-      if (sortBy === "confidence") {
-        return (a.confidence - b.confidence) * multiplier;
-      }
-      if (sortBy === "accuracy") {
-        return (a.accuracy - b.accuracy) * multiplier;
-      }
-      if (sortBy === "occurrences") {
-        return (a.occurrences - b.occurrences) * multiplier;
-      }
-      if (sortBy === "recent") {
-        const aTs = a.last_seen ? Date.parse(a.last_seen) : 0;
-        const bTs = b.last_seen ? Date.parse(b.last_seen) : 0;
-        return (aTs - bTs) * multiplier;
-      }
-      return (a.global_score - b.global_score) * multiplier;
-    });
-
-    return filtered;
-  }, [
-    filterActive,
-    filterElite,
-    filterHighConfidence,
-    filterRecent,
-    patternRanking.ranked_patterns,
-    sortBy,
-    sortDirection,
-  ]);
-
-  const rankingTop10 = useMemo(() => {
-    return [...patternRanking.ranked_patterns]
-      .sort((a, b) => b.global_score - a.global_score)
-      .slice(0, 10);
-  }, [patternRanking.ranked_patterns]);
-
-  const topConfidence = useMemo(
-    () => Math.max(0, ...patternRanking.ranked_patterns.map((pattern) => pattern.confidence)),
-    [patternRanking.ranked_patterns]
-  );
-
-  const topAccuracy = useMemo(
-    () => Math.max(0, ...patternRanking.ranked_patterns.map((pattern) => pattern.accuracy)),
-    [patternRanking.ranked_patterns]
-  );
-
-  const topStable = useMemo(
-    () => Math.max(0, ...patternRanking.ranked_patterns.map((pattern) => pattern.stability_score)),
-    [patternRanking.ranked_patterns]
-  );
-
-  const topRecent = useMemo(() => {
-    const latest = [...patternRanking.ranked_patterns]
-      .filter((pattern) => !!pattern.last_seen)
-      .sort(
-        (a, b) =>
-          Date.parse(b.last_seen ?? "1970-01-01T00:00:00.000Z") -
-          Date.parse(a.last_seen ?? "1970-01-01T00:00:00.000Z")
-      )[0];
-
-    return latest?.last_seen ? formatClock(new Date(latest.last_seen)) : "-";
-  }, [patternRanking.ranked_patterns]);
-
-  const accuracySparkline = useMemo(
-    () => buildSparkline(performanceAnalytics.accuracy_timeline),
-    [performanceAnalytics.accuracy_timeline]
-  );
-
-  const learningSparkline = useMemo(
-    () => buildSparkline(performanceAnalytics.learning_curve),
-    [performanceAnalytics.learning_curve]
-  );
-
-  const winLossTotal =
-    performanceAnalytics.win_loss_chart.wins + performanceAnalytics.win_loss_chart.losses;
-  const winPercent = winLossTotal
-    ? (performanceAnalytics.win_loss_chart.wins / winLossTotal) * 100
-    : 0;
-  const lossPercent = winLossTotal
-    ? (performanceAnalytics.win_loss_chart.losses / winLossTotal) * 100
-    : 0;
-
   const navItems = [
     "Dashboard",
     "Live",
@@ -959,19 +848,24 @@ function App() {
     "Backtest",
     "Historico",
     "Estatisticas",
-    "Laboratorio",
     "Configuracoes",
-    "Conta",
   ];
 
   const headerAccuracy = `${performanceAnalytics.overall_accuracy.toFixed(1)}%`;
   const headerConfidence = `${performanceAnalytics.average_confidence.toFixed(1)}%`;
+  const tradingDecision = mapTradingDecision(
+    performanceAnalytics.average_confidence,
+    performanceAnalytics.average_risk,
+    liveConnected
+  );
+  const protectedDecisionText = protectedExplanation(tradingDecision);
   const headerStatus =
     healthState === "success" ? health?.status ?? "online" : requestStateLabel(healthState);
 
   const aiCards = [
-    { label: "Decision", value: strategyResult.best_strategy },
+    { label: "Decisao", value: tradingDecision },
     { label: "Confidence", value: headerConfidence },
+    { label: "Risk", value: `${performanceAnalytics.average_risk.toFixed(1)}%` },
     { label: "Trend", value: pickMetric(analysis?.trend, ["direction", "trend", "status"]) },
     {
       label: "Probability",
@@ -983,12 +877,6 @@ function App() {
       value: pickMetric(analysis?.correlation, ["correlation", "strength", "pair"]),
     },
     { label: "Learning", value: String(learning.learning_score) },
-    { label: "Risk", value: `${performanceAnalytics.average_risk.toFixed(1)}%` },
-    {
-      label: "Seasonality",
-      value: pickMetric(analysis?.seasonality, ["phase", "seasonality", "status"]),
-    },
-    { label: "Accuracy", value: headerAccuracy },
   ];
 
   return (
@@ -1025,23 +913,27 @@ function App() {
             </article>
             <article className="header-chip">
               <span>Provider ativo</span>
-              <strong>{providerName.toUpperCase()}</strong>
+              <strong>{providerLabel(providerName)}</strong>
             </article>
             <article className="header-chip">
-              <span>Horario</span>
-              <strong>{formatClock(currentTime)}</strong>
-            </article>
-            <article className="header-chip">
-              <span>Eventos</span>
+              <span>Eventos recebidos</span>
               <strong>{liveEvents.length}</strong>
             </article>
             <article className="header-chip">
-              <span>Accuracy Geral</span>
+              <span>Accuracy</span>
               <strong>{headerAccuracy}</strong>
             </article>
             <article className="header-chip">
-              <span>Confidence Geral</span>
+              <span>Confidence</span>
               <strong>{headerConfidence}</strong>
+            </article>
+            <article className="header-chip">
+              <span>Learning Score</span>
+              <strong>{learning.learning_score}</strong>
+            </article>
+            <article className="header-chip">
+              <span>Ultima decisao</span>
+              <strong>{tradingDecision}</strong>
             </article>
           </div>
         </header>
@@ -1085,6 +977,10 @@ function App() {
                     ? `${formatClock(new Date(providerStatus.lastMessageAt))} - ${providerStatus.lastMessage ?? "mensagem recebida"}`
                     : "Sem mensagens"}
                 </p>
+              </div>
+              <div className="protected-explanation">
+                <p className="protected-explanation-title">Explicacao protegida</p>
+                <p>{protectedDecisionText}</p>
               </div>
 
               {analysisError ? <p className="error-text">{analysisError}</p> : null}
@@ -1198,221 +1094,56 @@ function App() {
           </div>
         </section>
 
-        <section className="lower-panels">
-          <Panel title="Estatisticas" subtitle="Espaco reservado">
-            {analysis ? (
-              <JsonViewer data={analysis.statistics} />
-            ) : (
-              <p className="empty-state">Execute uma analise para exibir dados.</p>
-            )}
-          </Panel>
-
-          <Panel title="Padroes" subtitle="Espaco reservado">
-            {analysis ? <JsonViewer data={analysis.patterns} /> : <p className="empty-state">Sem dados.</p>}
-          </Panel>
-
-          <Panel title="Regime" subtitle="Espaco reservado">
-            {analysis ? <JsonViewer data={analysis.regime} /> : <p className="empty-state">Sem dados.</p>}
-          </Panel>
-
-          <Panel title="Tendencia" subtitle="Espaco reservado">
-            {analysis ? <JsonViewer data={analysis.trend} /> : <p className="empty-state">Sem dados.</p>}
-          </Panel>
-
-          <Panel title="Distribuicao" subtitle="Espaco reservado">
-            {analysis ? <JsonViewer data={analysis.probability} /> : <p className="empty-state">Sem dados.</p>}
-          </Panel>
-
-          <Panel title="Heatmap" subtitle="Espaco reservado">
-            {analysis ? <JsonViewer data={analysis.correlation} /> : <p className="empty-state">Sem dados.</p>}
-          </Panel>
-
-          <Panel title="Performance" subtitle="Espaco reservado">
-            <div className="learning-metrics">
-              <p>
-                <strong>Overall:</strong> {performanceAnalytics.overall_accuracy}%
-              </p>
-              <p>
-                <strong>Win Rate:</strong> {performanceAnalytics.win_rate}%
-              </p>
-              <p>
-                <strong>Loss Rate:</strong> {performanceAnalytics.loss_rate}%
-              </p>
-              <p>
-                <strong>Avg Confidence:</strong> {performanceAnalytics.average_confidence}%
-              </p>
-              <p>
-                <strong>Learning:</strong> {learning.learning_score}
-              </p>
-              <p>
-                <strong>Storage:</strong> {storageInfo.status}
-              </p>
-            </div>
-
-            <div className="chart-grid compact-grid">
-              <div className="chart-card">
-                <h4 className="status-label">Win/Loss</h4>
-                <div className="stacked-bar" aria-label="Win and loss distribution">
-                  <div className="stacked-win" style={{ width: `${winPercent}%` }} />
-                  <div className="stacked-loss" style={{ width: `${lossPercent}%` }} />
-                </div>
-              </div>
-              <div className="chart-card">
-                <h4 className="status-label">Accuracy Timeline</h4>
-                <svg className="sparkline" viewBox="0 0 320 84" role="img" aria-label="Accuracy timeline">
-                  <polyline points={accuracySparkline} fill="none" stroke="var(--accent-blue)" strokeWidth="2" />
-                </svg>
-              </div>
-              <div className="chart-card">
-                <h4 className="status-label">Learning Curve</h4>
-                <svg className="sparkline" viewBox="0 0 320 84" role="img" aria-label="Learning curve">
-                  <polyline points={learningSparkline} fill="none" stroke="var(--accent-emerald)" strokeWidth="2" />
-                </svg>
-              </div>
-            </div>
-
-            {storageMessage ? <p className="status-label">{storageMessage}</p> : null}
-            {scanMessage ? <p className="status-label">{scanMessage}</p> : null}
-            <div className="progress-track" role="progressbar" aria-valuenow={scanProgress}>
-              <div className="progress-fill" style={{ width: `${scanProgress}%` }} />
-            </div>
-
-            <div className="action-row">
-              <button className="analyze-button" type="button" onClick={saveLearningNow}>
-                Salvar memoria
-              </button>
-              <button className="analyze-button" type="button" onClick={clearLearningMemory}>
-                Limpar memoria
-              </button>
+        <section className="lower-tabs-panel">
+          <div className="lower-tabs-header" role="tablist" aria-label="Painel inferior">
+            {[
+              { id: "estatisticas", label: "Estatisticas" },
+              { id: "padroes", label: "Padroes" },
+              { id: "performance", label: "Performance" },
+              { id: "replay", label: "Replay" },
+              { id: "simulacao", label: "Simulacao" },
+              { id: "logs", label: "Logs" },
+            ].map((tab) => (
               <button
-                className="analyze-button"
+                key={tab.id}
                 type="button"
-                onClick={handleScanHistory}
-                disabled={isScanningPatterns || learning.samples === 0}
+                role="tab"
+                aria-selected={activeBottomTab === tab.id}
+                className={`lower-tab-button ${activeBottomTab === tab.id ? "lower-tab-button-active" : ""}`}
+                onClick={() =>
+                  setActiveBottomTab(
+                    tab.id as
+                      | "estatisticas"
+                      | "padroes"
+                      | "performance"
+                      | "replay"
+                      | "simulacao"
+                      | "logs"
+                  )
+                }
               >
-                {isScanningPatterns ? "Scanning..." : "Scan History"}
+                {tab.label}
               </button>
-              <button className="analyze-button" type="button" onClick={handleAutoStrategy}>
-                Auto strategy
-              </button>
-              <button className="analyze-button" type="button" onClick={handleManualStrategy}>
-                Manual strategy
-              </button>
-              <button
-                className="analyze-button"
-                type="button"
-                onClick={() => runStrategySelection(strategyMode, manualStrategy)}
-                disabled={!patternRanking.ranked_patterns.length && !patternDiscovery.patterns.length}
-              >
-                Atualizar estrategia
-              </button>
-            </div>
+            ))}
+          </div>
 
-            <div className="action-row">
-              <label className="provider-select">
-                Estrategia manual
-                <select
-                  value={manualStrategy}
-                  onChange={(event) =>
-                    setManualStrategy(
-                      event.target.value as
-                        | "Conservative"
-                        | "Balanced"
-                        | "Aggressive"
-                        | "Adaptive"
-                        | "Experimental"
-                    )
-                  }
-                >
-                  <option value="Conservative">Conservative</option>
-                  <option value="Balanced">Balanced</option>
-                  <option value="Aggressive">Aggressive</option>
-                  <option value="Adaptive">Adaptive</option>
-                  <option value="Experimental">Experimental</option>
-                </select>
-              </label>
-              <label className="provider-select">
-                Ordenar por
-                <select
-                  value={sortBy}
-                  onChange={(event) =>
-                    setSortBy(
-                      event.target.value as
-                        | "score"
-                        | "confidence"
-                        | "accuracy"
-                        | "occurrences"
-                        | "recent"
-                    )
-                  }
-                >
-                  <option value="score">Score</option>
-                  <option value="confidence">Confidence</option>
-                  <option value="accuracy">Accuracy</option>
-                  <option value="occurrences">Occurrences</option>
-                  <option value="recent">Last Seen</option>
-                </select>
-              </label>
-              <label className="provider-select">
-                Direcao
-                <select
-                  value={sortDirection}
-                  onChange={(event) => setSortDirection(event.target.value as "asc" | "desc")}
-                >
-                  <option value="desc">Desc</option>
-                  <option value="asc">Asc</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="pattern-table-wrapper">
-              <table className="pattern-table">
-                <thead>
-                  <tr>
-                    <th>Pattern</th>
-                    <th>Rank</th>
-                    <th>Score</th>
-                    <th>Confidence</th>
-                    <th>Accuracy</th>
-                    <th>Occurrences</th>
-                    <th>Last Seen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rankedPatterns.slice(0, 8).length ? (
-                    rankedPatterns.slice(0, 8).map((pattern) => (
-                      <tr key={pattern.id}>
-                        <td>{pattern.pattern}</td>
-                        <td>{pattern.rank}</td>
-                        <td>{pattern.global_score}</td>
-                        <td>{pattern.confidence}%</td>
-                        <td>{pattern.accuracy}%</td>
-                        <td>{pattern.occurrences}</td>
-                        <td>{pattern.last_seen ? formatClock(new Date(pattern.last_seen)) : "-"}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={7}>Sem ranking disponivel.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <p className="status-label">
-              Top 10: {rankingTop10.length} | Top Confidence: {topConfidence}% | Top Accuracy: {topAccuracy}% |
-              Top Stable: {topStable}% | Top Recent: {topRecent}
-            </p>
-            <JsonViewer
-              data={{
-                recommendation: strategyResult.recommendation,
-                reason: strategyResult.reason,
-                strategy_history: strategyHistory.slice(0, 8),
-                discovery_summary: patternDiscovery.summary,
-              }}
-            />
-          </Panel>
+          <div className="lower-tab-content" role="tabpanel">
+            <article className="placeholder-card">
+              <h4>{activeBottomTab.toUpperCase()}</h4>
+              <p>
+                Painel visual em evolucao para o Sprint UI-01. Estrutura pronta para integrar conteudo comercial,
+                mantendo o stream e os controles de operacao ativos no topo.
+              </p>
+              <div className="placeholder-metrics">
+                <span>Eventos: {liveEvents.length}</span>
+                <span>Accuracy: {headerAccuracy}</span>
+                <span>Confidence: {headerConfidence}</span>
+                <span>Learning: {learning.learning_score}</span>
+                <span>Status: {liveConnected ? "online" : "offline"}</span>
+                <span>Decisao: {tradingDecision}</span>
+              </div>
+            </article>
+          </div>
         </section>
       </section>
     </main>

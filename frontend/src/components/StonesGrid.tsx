@@ -72,6 +72,10 @@ export function StonesGrid({ events }: StonesGridProps) {
     return new Set(stones.slice(-STONES_PER_ROW).map((stone) => stone.id));
   }, [stones]);
 
+  const recentResults = useMemo(() => {
+    return stones.slice(-12).reverse();
+  }, [stones]);
+
   useEffect(() => {
     const node = scrollRef.current;
     if (!node || !followNewest) {
@@ -109,6 +113,20 @@ export function StonesGrid({ events }: StonesGridProps) {
           <span>{followNewest ? "Auto-follow ativo" : "Auto-follow pausado"}</span>
         </div>
       </header>
+
+      <div className="stones-recent-strip" aria-label="Ultimos resultados">
+        {recentResults.length ? (
+          recentResults.map((stone) => (
+            <div key={`recent-${stone.id}`} className="recent-pill">
+              <span className={`recent-pill-dot recent-pill-dot-${stone.event.color}`} />
+              <strong>{stone.event.number}</strong>
+              <small>{stone.time}</small>
+            </div>
+          ))
+        ) : (
+          <p className="stones-recent-empty">Aguardando resultados ao vivo...</p>
+        )}
+      </div>
 
       <div className="stones-grid-scroll" ref={scrollRef} onScroll={handleScroll}>
         <div
