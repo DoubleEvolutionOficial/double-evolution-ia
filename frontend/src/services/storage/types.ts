@@ -1,4 +1,5 @@
 import { LearningEngineState } from "../learning/types";
+import { LiveDataEvent } from "../live-data/types";
 import { PatternDiscoveryResult } from "../pattern-discovery/types";
 import { PatternRankingResult } from "../pattern-ranking/types";
 import { PerformanceAnalyticsSnapshot } from "../performance-analytics/types";
@@ -41,4 +42,43 @@ export type PersistentStrategyCenterRecord = {
 export type PersistentPerformanceAnalyticsRecord = {
   updated_at: string;
   snapshot: PerformanceAnalyticsSnapshot;
+};
+
+export type BacktestRecord = {
+  timestamp: string;
+  signal: "Vermelho" | "Preto" | "Branco";
+  confidence: number;
+  risk: number;
+  result: string;
+  outcome: "win" | "loss";
+  pattern: string;
+};
+
+export type ManualSimulationRecord = {
+  timestamp: string;
+  entry: "red" | "black" | "white";
+  result: "WIN" | "LOSS" | "GALE 1" | "GALE 2";
+  amountDelta: number;
+  bankrollAfter: number;
+};
+
+export type ManualSimulationState = {
+  bankrollStart: number;
+  bankrollCurrent: number;
+  records: ManualSimulationRecord[];
+};
+
+export type PersistentHistoryImportRecord = {
+  updated_at: string;
+  events: LiveDataEvent[];
+};
+
+export type PersistentBacktestRecord = {
+  updated_at: string;
+  records: BacktestRecord[];
+};
+
+export type PersistentManualSimulationRecord = {
+  updated_at: string;
+  state: ManualSimulationState;
 };
