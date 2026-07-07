@@ -3,6 +3,7 @@ import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
 import { JsonViewer } from "./components/JsonViewer";
 import { Panel } from "./components/Panel";
+import { ReplayTimeline } from "./components/ReplayTimeline";
 import { StonesGrid } from "./components/StonesGrid";
 import { StatusBadge } from "./components/StatusBadge";
 import { LearningEngine } from "./services/learning/learningEngine";
@@ -42,6 +43,12 @@ import {
 import "./App.css";
 
 type RequestState = "idle" | "loading" | "success" | "error" | "offline";
+
+const MAX_REPLAY_HISTORY = 500;
+
+function replayEventKey(event: LiveDataEvent): string {
+  return `${event.timestamp}|${event.color}|${event.number}|${event.white ? "1" : "0"}`;
+}
 
 function mapErrorToState(err: unknown): { state: RequestState; message: string } {
   const message = err instanceof Error ? err.message : "Erro inesperado na API";
@@ -306,6 +313,7 @@ function App() {
   const [providerStatus, setProviderStatus] = useState<LiveDataProviderStatus>(
     liveDataService.getProviderStatus()
   );
+  const [replayHistory, setReplayHistory] = useState<LiveDataEvent[]>([]);
   const [analysis, setAnalysis] = useState<LaboratoryAnalyzeResponse | null>(
     null
   );
@@ -354,6 +362,39 @@ function App() {
   const patternRankingEngineRef = useRef(new PatternRankingEngine());
   const performanceAnalyticsEngineRef = useRef(new PerformanceAnalytics());
   const strategyEngineRef = useRef(new StrategyEngine());
+  const replaySeenKeysRef = useRef<Set<string>>(new Set());
+
+  const appendReplayHistory = useCallback((events: LiveDataEvent[]) => {
+    if (!events.length) {
+      return;
+    }
+
+    setReplayHistory((previous) => {
+      const next = [...previous];
+
+      for (const event of events) {
+        const key = replayEventKey(event);
+        if (replaySeenKeysRef.current.has(key)) {
+          continue;
+        }
+
+        replaySeenKeysRef.current.add(key);
+        next.push(event);
+      }
+
+      if (next.length <= MAX_REPLAY_HISTORY) {
+        return next;
+      }
+
+      const overflow = next.length - MAX_REPLAY_HISTORY;
+      const removed = next.splice(0, overflow);
+      removed.forEach((event) => {
+        replaySeenKeysRef.current.delete(replayEventKey(event));
+      });
+
+      return next;
+    });
+  }, []);
 
   const refreshStorageInfo = useCallback(() => {
     setStorageInfo(storageService.getStorageInfo(true));
@@ -661,6 +702,7 @@ function App() {
 
     const unsubscribe = liveDataService.subscribe((events) => {
       setLiveEvents(events);
+      appendReplayHistory(events);
       setLiveConnected(liveDataService.isConnected());
       setProviderName(liveDataService.getProviderName());
       setProviderStatus(liveDataService.getProviderStatus());
@@ -707,6 +749,7 @@ function App() {
     saveLearningNow,
     scheduleAutoAnalyze,
     strategyMode,
+    appendReplayHistory,
   ]);
 
   function handleConnectLiveData() {
@@ -736,6 +779,8 @@ function App() {
     setLiveConnected(liveDataService.isConnected());
     setLiveEvents(liveDataService.getLatestEvents());
     setProviderStatus(liveDataService.getProviderStatus());
+    setReplayHistory([]);
+    replaySeenKeysRef.current = new Set();
     learningEngineRef.current = new LearningEngine();
     lastIngestedIndexRef.current = 0;
     setLearning(createEmptyLearning());
@@ -1128,21 +1173,25 @@ function App() {
           </div>
 
           <div className="lower-tab-content" role="tabpanel">
-            <article className="placeholder-card">
-              <h4>{activeBottomTab.toUpperCase()}</h4>
-              <p>
-                Painel visual em evolucao para o Sprint UI-01. Estrutura pronta para integrar conteudo comercial,
-                mantendo o stream e os controles de operacao ativos no topo.
-              </p>
-              <div className="placeholder-metrics">
-                <span>Eventos: {liveEvents.length}</span>
-                <span>Accuracy: {headerAccuracy}</span>
-                <span>Confidence: {headerConfidence}</span>
-                <span>Learning: {learning.learning_score}</span>
-                <span>Status: {liveConnected ? "online" : "offline"}</span>
-                <span>Decisao: {tradingDecision}</span>
-              </div>
-            </article>
+            {activeBottomTab === "replay" ? (
+              <ReplayTimeline events={replayHistory} />
+            ) : (
+              <article className="placeholder-card">
+                <h4>{activeBottomTab.toUpperCase()}</h4>
+                <p>
+                  Painel visual premium em evolucao. Esta aba mantem layout comercial enquanto o stream continua
+                  alimentando o dashboard em tempo real.
+                </p>
+                <div className="placeholder-metrics">
+                  <span>Eventos: {liveEvents.length}</span>
+                  <span>Accuracy: {headerAccuracy}</span>
+                  <span>Confidence: {headerConfidence}</span>
+                  <span>Learning: {learning.learning_score}</span>
+                  <span>Status: {liveConnected ? "online" : "offline"}</span>
+                  <span>Decisao: {tradingDecision}</span>
+                </div>
+              </article>
+            )}
           </div>
         </section>
       </section>
