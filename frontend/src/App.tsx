@@ -47,6 +47,7 @@ import {
 } from "./types/laboratory";
 import { providerManager } from "./services/provider-manager/providerManager";
 import { ManagedProviderId, ProviderManagerSnapshot } from "./services/provider-manager/types";
+import { getDoubleColor } from "./utils/doubleColor";
 import "./App.css";
 import { JsonViewer } from "./components/JsonViewer";
 
@@ -107,7 +108,8 @@ function requestStateLabel(state: RequestState): string {
 
 function toLaboratoryEvent(event: LiveDataEvent): LaboratoryEvent {
   const when = new Date(event.timestamp);
-  const classification = event.color === "red" ? "DEVEDOR" : "PAGADOR";
+  const normalizedColor = getDoubleColor(event.number);
+  const classification = normalizedColor === "red" ? "DEVEDOR" : "PAGADOR";
 
   return {
     timestamp: event.timestamp,
@@ -116,8 +118,8 @@ function toLaboratoryEvent(event: LiveDataEvent): LaboratoryEvent {
     side: event.number % 2 === 0 ? "right" : "left",
     distance: Number((event.number / 2 + 3).toFixed(1)),
     classification,
-    confidence: event.white ? 72 : 84,
-    score: event.white ? 1.8 : 2.4,
+    confidence: normalizedColor === "white" ? 72 : 84,
+    score: normalizedColor === "white" ? 1.8 : 2.4,
     triggered_rules: classification === "DEVEDOR" ? ["REG-002"] : ["REG-003"],
     recommendation: classification === "DEVEDOR" ? "Revisar" : "Aprovar",
   };
@@ -242,13 +244,6 @@ function parseTimestamp(value: unknown): string | null {
   return date.toISOString();
 }
 
-function inferColorFromNumber(number: number): "red" | "black" | "white" {
-  if (number === 0) {
-    return "white";
-  }
-  return number % 2 === 0 ? "black" : "red";
-}
-
 function normalizeImportedEvent(
   raw: Record<string, unknown>,
   previousEvents: LiveDataEvent[]
@@ -265,11 +260,12 @@ function normalizeImportedEvent(
     return { event: null, error: "timestamp invalido" };
   }
 
-  const derivedColor = inferColorFromNumber(rawNumber);
-  const color = rawColor ?? derivedColor;
-  if (rawNumber === 0 && color !== "white") {
-    return { event: null, error: "numero 0 deve ser branco" };
+  const derivedColor = getDoubleColor(rawNumber);
+  if (rawColor && rawColor !== derivedColor) {
+    return { event: null, error: "cor inconsistente com numero" };
   }
+
+  const color = derivedColor;
 
   const previousColors = previousEvents.slice(-7).map((item) => item.color);
   const sequence = [...previousColors, color];
@@ -383,7 +379,7 @@ function computeLongestColorStreak(events: LiveDataEvent[]): number {
   let current = 1;
 
   for (let index = 1; index < events.length; index += 1) {
-    if (events[index].color === events[index - 1].color) {
+    if (getDoubleColor(events[index].number) === getDoubleColor(events[index - 1].number)) {
       current += 1;
       if (current > max) {
         max = current;
@@ -446,13 +442,14 @@ function suggestColor(events: LiveDataEvent[]): "Preto" | "Vermelho" | "Branco" 
   let black = 0;
   let white = 0;
   recent.forEach((event) => {
-    if (event.color === "red") {
+    const color = getDoubleColor(event.number);
+    if (color === "red") {
       red += 1;
     }
-    if (event.color === "black") {
+    if (color === "black") {
       black += 1;
     }
-    if (event.color === "white") {
+    if (color === "white") {
       white += 1;
     }
   });
@@ -688,6 +685,13 @@ function App() {
   const replaySeenKeysRef = useRef<Set<string>>(new Set());
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const consumeStorageWarningIfAny = useCallback(() => {
+    const warning = storageService.consumeWarningMessage();
+    if (warning) {
+      setStorageMessage(warning);
+    }
+  }, []);
+
   useEffect(() => {
     const unsubscribe = providerManager.subscribe((snapshot) => {
       setProviderSnapshot(snapshot);
@@ -737,12 +741,13 @@ function App() {
       const state = learningEngineRef.current.exportState();
       const savedAt = storageService.saveLearningState(state);
       refreshStorageInfo();
+      consumeStorageWarningIfAny();
       setStorageMessage(`Memoria salva em ${formatClock(new Date(savedAt))}`);
     } catch {
       setStorageMessage("Falha ao salvar memoria");
       refreshStorageInfo();
     }
-  }, [refreshStorageInfo]);
+  }, [consumeStorageWarningIfAny, refreshStorageInfo]);
 
   const appendStrategyHistory = useCallback(
     (
@@ -816,6 +821,7 @@ function App() {
 
       storageService.saveStrategyCenterState(centerState);
       refreshStorageInfo();
+      consumeStorageWarningIfAny();
     },
     [
       analysis,
@@ -823,6 +829,7 @@ function App() {
       liveEvents,
       patternDiscovery,
       patternRanking,
+      consumeStorageWarningIfAny,
       refreshStorageInfo,
     ]
   );
@@ -851,8 +858,9 @@ function App() {
       setPerformanceAnalytics(snapshot);
       storageService.savePerformanceAnalyticsSnapshot(snapshot);
       refreshStorageInfo();
+      consumeStorageWarningIfAny();
     },
-    [analysis, learning, liveEvents, patternRanking, refreshStorageInfo, strategyResult]
+    [analysis, consumeStorageWarningIfAny, learning, liveEvents, patternRanking, refreshStorageInfo, strategyResult]
   );
 
   useEffect(() => {
@@ -991,8 +999,7 @@ function App() {
     }
 
     const number = Math.floor(Math.random() * 15);
-    const color: "red" | "black" | "white" =
-      number === 0 ? "white" : number % 2 === 0 ? "black" : "red";
+    const color = getDoubleColor(number);
     const current = liveDataService.getLatestEvents();
     const sequence = [...current.slice(-7).map((item) => item.color), color];
 
@@ -1241,6 +1248,7 @@ function App() {
       storageService.savePatternDiscoveryResult(result);
       storageService.savePatternRankingResult(ranking);
       refreshStorageInfo();
+      consumeStorageWarningIfAny();
 
       await delay(80);
       setPatternDiscovery(result);
@@ -1306,6 +1314,7 @@ function App() {
       setReplayPlaying(false);
       storageService.saveImportedHistoryEvents(events);
       refreshStorageInfo();
+      consumeStorageWarningIfAny();
       setImportMessage(
         `${events.length} evento(s) importado(s) com sucesso${errors.length ? ` (${errors.length} ignorado(s))` : ""}.`
       );
@@ -1362,17 +1371,18 @@ function App() {
       const current = sourceEvents[index];
       const signal = suggestColor(windowEvents);
       const signalColor = toSignalColor(signal);
-      const matches = windowEvents.filter((event) => event.color === signalColor).length;
+      const matches = windowEvents.filter((event) => getDoubleColor(event.number) === signalColor).length;
       const confidence = clampPercent(Math.round((matches / windowEvents.length) * 100));
-      const risk = clampPercent(100 - confidence + (current.white ? 6 : 0));
-      const outcome = current.color === signalColor ? "win" : "loss";
+      const currentColor = getDoubleColor(current.number);
+      const risk = clampPercent(100 - confidence + (currentColor === "white" ? 6 : 0));
+      const outcome = currentColor === signalColor ? "win" : "loss";
 
       records.push({
         timestamp: current.timestamp,
         signal,
         confidence,
         risk,
-        result: outcome === "win" ? "Acerto" : `Erro (${eventColorLabel(current.color)})`,
+        result: outcome === "win" ? "Acerto" : `Erro (${eventColorLabel(currentColor)})`,
         outcome,
         pattern: `streak-${computeLongestColorStreak(windowEvents)}`,
       });
@@ -1381,6 +1391,7 @@ function App() {
     setBacktestRecords(records);
     storageService.saveBacktestRecords(records);
     refreshStorageInfo();
+    consumeStorageWarningIfAny();
     setBacktestMessage(`Backtest concluido: ${records.length} entrada(s).`);
     setIsBacktesting(false);
   }
@@ -1413,6 +1424,7 @@ function App() {
       records: nextRecords,
     });
     refreshStorageInfo();
+    consumeStorageWarningIfAny();
   }
 
   function resetManualSimulation() {
@@ -1551,13 +1563,15 @@ function App() {
     : providerStatus.message;
 
   const historyEvents = useMemo(() => {
-    if (liveEvents.length) {
-      return liveEvents;
-    }
-    if (replayHistory.length) {
-      return replayHistory;
-    }
-    return importedHistory;
+    const base = liveEvents.length ? liveEvents : replayHistory.length ? replayHistory : importedHistory;
+    return base.map((event) => {
+      const color = getDoubleColor(event.number);
+      return {
+        ...event,
+        color,
+        white: color === "white",
+      };
+    });
   }, [importedHistory, liveEvents, replayHistory]);
 
   const statisticsFromEvents = useMemo(() => {

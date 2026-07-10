@@ -4,6 +4,7 @@ import {
   LiveDataProviderContract,
   LiveDataProviderStatus,
 } from "../types";
+import { getDoubleColor } from "../../../utils/doubleColor";
 
 const MAX_BUFFER = 128;
 
@@ -314,13 +315,22 @@ export class WebSocketDataProvider implements LiveDataProviderContract {
       return null;
     }
 
-    this.sequence = [...this.sequence, color].slice(-8);
+    if (!Number.isInteger(number) || number < 0 || number > 14) {
+      return null;
+    }
+
+    const normalizedColor = getDoubleColor(number);
+    if (color !== normalizedColor || white !== (normalizedColor === "white")) {
+      return null;
+    }
+
+    this.sequence = [...this.sequence, normalizedColor].slice(-8);
 
     return {
       timestamp,
-      color,
+      color: normalizedColor,
       number,
-      white,
+      white: normalizedColor === "white",
       sequence: [...this.sequence],
     };
   }

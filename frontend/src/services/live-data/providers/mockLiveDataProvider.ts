@@ -3,15 +3,9 @@ import {
   LiveDataEvent,
   LiveDataProviderContract,
 } from "../types";
+import { getDoubleColor } from "../../../utils/doubleColor";
 
 const MAX_NUMBER = 14;
-
-function resolveColor(value: number): "red" | "black" | "white" {
-  if (value === 0) {
-    return "white";
-  }
-  return value % 2 === 0 ? "black" : "red";
-}
 
 const MAX_BUFFER = 64;
 
@@ -30,7 +24,7 @@ export class MockDataProvider implements LiveDataProviderContract {
 
     this.timer = window.setInterval(() => {
       const number = Math.floor(Math.random() * (MAX_NUMBER + 1));
-      const color = resolveColor(number);
+      const color = getDoubleColor(number);
       const event: LiveDataEvent = {
         timestamp: new Date().toISOString(),
         color,

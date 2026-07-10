@@ -3,6 +3,7 @@ import {
   LiveDataEvent,
   LiveDataProviderContract,
 } from "../types";
+import { getDoubleColor } from "../../../utils/doubleColor";
 
 const MAX_BUFFER = 64;
 
@@ -43,7 +44,13 @@ export class ManualDataProvider implements LiveDataProviderContract {
       return;
     }
 
-    this.events.push(event);
+    const normalizedColor = getDoubleColor(event.number);
+    this.events.push({
+      ...event,
+      color: normalizedColor,
+      white: normalizedColor === "white",
+      sequence: [...event.sequence.slice(-7), normalizedColor],
+    });
     if (this.events.length > MAX_BUFFER) {
       this.events.splice(0, this.events.length - MAX_BUFFER);
     }

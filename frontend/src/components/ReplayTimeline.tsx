@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LiveDataEvent } from "../services/live-data/types";
+import { getDoubleColor } from "../utils/doubleColor";
 
 type ReplayTimelineProps = {
   events: LiveDataEvent[];
@@ -66,20 +67,22 @@ function buildReplayStats(events: LiveDataEvent[]): ReplayStats {
   let currentColor: ReplayStats["streakColor"] = "-";
 
   for (const event of events) {
-    if (event.color === "red") {
+    const color = getDoubleColor(event.number);
+
+    if (color === "red") {
       red += 1;
     }
-    if (event.color === "black") {
+    if (color === "black") {
       black += 1;
     }
-    if (event.color === "white") {
+    if (color === "white") {
       white += 1;
     }
 
-    if (event.color === currentColor) {
+    if (color === currentColor) {
       currentStreak += 1;
     } else {
-      currentColor = event.color;
+      currentColor = color;
       currentStreak = 1;
     }
 

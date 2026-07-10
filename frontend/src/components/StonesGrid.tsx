@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LiveDataEvent } from "../services/live-data/types";
+import { getDoubleColor } from "../utils/doubleColor";
 
 type StonesGridProps = {
   events: LiveDataEvent[];
@@ -37,15 +38,24 @@ export function StonesGrid({ events }: StonesGridProps) {
   const [followNewest, setFollowNewest] = useState(true);
 
   const stones = useMemo<StoneViewModel[]>(() => {
-    return events.map((event, index) => ({
+    return events.map((event, index) => {
+      const color = getDoubleColor(event.number);
+      const normalizedEvent: LiveDataEvent = {
+        ...event,
+        color,
+        white: color === "white",
+      };
+
+      return {
       id: `${event.timestamp}-${event.number}-${index}`,
-      event,
+      event: normalizedEvent,
       minute: formatMinute(event.timestamp),
       time: formatTime(event.timestamp),
-      sequenceLabel: event.sequence.join(" > "),
+      sequenceLabel: [...event.sequence.slice(-7), color].join(" > "),
       // Reserved markers for future IA integrations.
       markers: {},
-    }));
+      };
+    });
   }, [events]);
 
   const rows = useMemo(() => {

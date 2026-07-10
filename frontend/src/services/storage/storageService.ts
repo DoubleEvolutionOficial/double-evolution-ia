@@ -29,11 +29,138 @@ const HISTORY_IMPORT_STORAGE_KEY = "double-evolution.history-import.v1";
 const BACKTEST_STORAGE_KEY = "double-evolution.backtest.v1";
 const MANUAL_SIMULATION_STORAGE_KEY = "double-evolution.manual-simulation.v1";
 
+const MAX_PERSISTED_EVENTS = 500;
+const MAX_PERSISTED_ANALYSES = 200;
+const MAX_PERSISTED_BACKTESTS = 50;
+const MAX_PERSISTED_SIMULATIONS = 100;
+const PERSIST_DEBOUNCE_MS = 350;
+
+const STORAGE_KEY_PRIORITY = [
+  PERFORMANCE_ANALYTICS_STORAGE_KEY,
+  PATTERN_DISCOVERY_STORAGE_KEY,
+  PATTERN_RANKING_STORAGE_KEY,
+  STRATEGY_CENTER_STORAGE_KEY,
+  HISTORY_IMPORT_STORAGE_KEY,
+  BACKTEST_STORAGE_KEY,
+  MANUAL_SIMULATION_STORAGE_KEY,
+  LEARNING_STORAGE_KEY,
+];
+
 export class StorageService {
   private readonly driver: StorageDriver;
+  private readonly pendingWrites = new Map<string, number>();
+  private readonly pendingValues = new Map<string, string>();
+  private readonly lastPersistedValues = new Map<string, string>();
+  private warningMessage: string | null = null;
 
   constructor(driver: StorageDriver = new LocalStorageDriver()) {
     this.driver = driver;
+  }
+
+  consumeWarningMessage(): string | null {
+    const next = this.warningMessage;
+    this.warningMessage = null;
+    return next;
+  }
+
+  private enqueuePersist(key: string, payload: unknown): void {
+    const serialized = JSON.stringify(payload);
+    if (this.lastPersistedValues.get(key) === serialized || this.pendingValues.get(key) === serialized) {
+      return;
+    }
+
+    this.pendingValues.set(key, serialized);
+    const activeTimer = this.pendingWrites.get(key);
+    if (activeTimer !== undefined) {
+      window.clearTimeout(activeTimer);
+    }
+
+    const timer = window.setTimeout(() => {
+      this.pendingWrites.delete(key);
+      this.pendingValues.delete(key);
+      this.persistWithQuotaRecovery(key, serialized);
+    }, PERSIST_DEBOUNCE_MS);
+
+    this.pendingWrites.set(key, timer);
+  }
+
+  private persistWithQuotaRecovery(key: string, serialized: string): void {
+    try {
+      this.driver.setItem(key, serialized);
+      this.lastPersistedValues.set(key, serialized);
+      return;
+    } catch (error) {
+      if (!this.isQuotaExceeded(error)) {
+        return;
+      }
+    }
+
+    const removed = this.removeOldestStorageEntry(key);
+    if (!removed) {
+      this.warningMessage = "Armazenamento local cheio. Dados antigos foram descartados.";
+      return;
+    }
+
+    try {
+      this.driver.setItem(key, serialized);
+      this.lastPersistedValues.set(key, serialized);
+    } catch {
+      this.warningMessage = "Armazenamento local cheio. Dados antigos foram descartados.";
+    }
+  }
+
+  private removeOldestStorageEntry(skipKey: string): boolean {
+    type Candidate = { key: string; updatedAt: number };
+    const candidates: Candidate[] = [];
+
+    for (const key of STORAGE_KEY_PRIORITY) {
+      if (key === skipKey) {
+        continue;
+      }
+
+      try {
+        const raw = this.driver.getItem(key);
+        if (!raw) {
+          continue;
+        }
+
+        const parsed = JSON.parse(raw) as { updated_at?: string };
+        const updatedAt = parsed?.updated_at ? new Date(parsed.updated_at).getTime() : 0;
+        candidates.push({ key, updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0 });
+      } catch {
+        candidates.push({ key, updatedAt: 0 });
+      }
+    }
+
+    if (!candidates.length) {
+      return false;
+    }
+
+    candidates.sort((left, right) => left.updatedAt - right.updatedAt);
+    const oldest = candidates[0];
+    this.driver.removeItem(oldest.key);
+    this.lastPersistedValues.delete(oldest.key);
+    this.pendingValues.delete(oldest.key);
+    return true;
+  }
+
+  private isQuotaExceeded(error: unknown): boolean {
+    if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+      return (
+        error.name === "QuotaExceededError" ||
+        error.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+        error.code === 22 ||
+        error.code === 1014
+      );
+    }
+
+    if (error instanceof Error) {
+      const name = error.name.toLowerCase();
+      const message = error.message.toLowerCase();
+      return name.includes("quota") || message.includes("quota");
+    }
+
+    return false;
   }
 
   loadLearningState(): LearningEngineState | null {
@@ -48,7 +175,10 @@ export class StorageService {
         return null;
       }
 
-      return parsed.engine_state;
+      return {
+        ...parsed.engine_state,
+        history: parsed.engine_state.history.slice(-MAX_PERSISTED_EVENTS),
+      };
     } catch {
       return null;
     }
@@ -56,10 +186,12 @@ export class StorageService {
 
   saveLearningState(state: LearningEngineState): string {
     const now = new Date().toISOString();
+    const trimmedHistory = state.history.slice(-MAX_PERSISTED_EVENTS);
     const payload: PersistentLearningRecord = {
       updated_at: now,
       engine_state: {
         ...state,
+        history: trimmedHistory,
         snapshot: {
           ...state.snapshot,
           last_updated_at: now,
@@ -67,7 +199,7 @@ export class StorageService {
       },
     };
 
-    this.driver.setItem(LEARNING_STORAGE_KEY, JSON.stringify(payload));
+    this.enqueuePersist(LEARNING_STORAGE_KEY, payload);
     return now;
   }
 
@@ -83,7 +215,14 @@ export class StorageService {
       }
 
       const parsed = JSON.parse(raw) as PersistentPatternDiscoveryRecord;
-      return parsed?.result ?? null;
+      if (!parsed?.result) {
+        return null;
+      }
+
+      return {
+        ...parsed.result,
+        patterns: parsed.result.patterns.slice(-MAX_PERSISTED_ANALYSES),
+      };
     } catch {
       return null;
     }
@@ -91,15 +230,24 @@ export class StorageService {
 
   savePatternDiscoveryResult(result: PatternDiscoveryResult): string {
     const now = new Date().toISOString();
+    const patterns = result.patterns.slice(-MAX_PERSISTED_ANALYSES);
     const payload: PersistentPatternDiscoveryRecord = {
       updated_at: now,
       result: {
         ...result,
+        summary: {
+          ...result.summary,
+          total_patterns: patterns.length,
+          new_patterns: patterns.filter((item) => item.is_new).length,
+          high_confidence: patterns.filter((item) => item.confidence >= 70).length,
+          discarded_patterns: patterns.filter((item) => item.status === "discarded").length,
+        },
+        patterns,
         scanned_at: now,
       },
     };
 
-    this.driver.setItem(PATTERN_DISCOVERY_STORAGE_KEY, JSON.stringify(payload));
+    this.enqueuePersist(PATTERN_DISCOVERY_STORAGE_KEY, payload);
     return now;
   }
 
@@ -115,7 +263,14 @@ export class StorageService {
       }
 
       const parsed = JSON.parse(raw) as PersistentPatternRankingRecord;
-      return parsed?.result ?? null;
+      if (!parsed?.result) {
+        return null;
+      }
+
+      return {
+        ...parsed.result,
+        ranked_patterns: parsed.result.ranked_patterns.slice(-MAX_PERSISTED_ANALYSES),
+      };
     } catch {
       return null;
     }
@@ -127,11 +282,12 @@ export class StorageService {
       updated_at: now,
       result: {
         ...result,
+        ranked_patterns: result.ranked_patterns.slice(-MAX_PERSISTED_ANALYSES),
         scanned_at: now,
       },
     };
 
-    this.driver.setItem(PATTERN_RANKING_STORAGE_KEY, JSON.stringify(payload));
+    this.enqueuePersist(PATTERN_RANKING_STORAGE_KEY, payload);
     return now;
   }
 
@@ -147,7 +303,14 @@ export class StorageService {
       }
 
       const parsed = JSON.parse(raw) as PersistentStrategyCenterRecord;
-      return parsed?.state ?? null;
+      if (!parsed?.state) {
+        return null;
+      }
+
+      return {
+        ...parsed.state,
+        history: parsed.state.history.slice(-MAX_PERSISTED_ANALYSES),
+      };
     } catch {
       return null;
     }
@@ -159,6 +322,7 @@ export class StorageService {
       updated_at: now,
       state: {
         ...state,
+        history: state.history.slice(-MAX_PERSISTED_ANALYSES),
         result: {
           ...state.result,
           generated_at: now,
@@ -166,7 +330,7 @@ export class StorageService {
       },
     };
 
-    this.driver.setItem(STRATEGY_CENTER_STORAGE_KEY, JSON.stringify(payload));
+    this.enqueuePersist(STRATEGY_CENTER_STORAGE_KEY, payload);
     return now;
   }
 
@@ -182,7 +346,19 @@ export class StorageService {
       }
 
       const parsed = JSON.parse(raw) as PersistentPerformanceAnalyticsRecord;
-      return parsed?.snapshot ?? null;
+      if (!parsed?.snapshot) {
+        return null;
+      }
+
+      return {
+        ...parsed.snapshot,
+        accuracy_timeline: parsed.snapshot.accuracy_timeline.slice(-MAX_PERSISTED_ANALYSES),
+        learning_curve: parsed.snapshot.learning_curve.slice(-MAX_PERSISTED_ANALYSES),
+        accuracy_by_hour: parsed.snapshot.accuracy_by_hour.slice(-MAX_PERSISTED_ANALYSES),
+        accuracy_by_strategy: parsed.snapshot.accuracy_by_strategy.slice(-MAX_PERSISTED_ANALYSES),
+        performance_by_pattern: parsed.snapshot.performance_by_pattern.slice(-MAX_PERSISTED_ANALYSES),
+        last_results: parsed.snapshot.last_results.slice(-MAX_PERSISTED_ANALYSES),
+      };
     } catch {
       return null;
     }
@@ -195,10 +371,16 @@ export class StorageService {
       snapshot: {
         ...snapshot,
         updated_at: now,
+        accuracy_timeline: snapshot.accuracy_timeline.slice(-MAX_PERSISTED_ANALYSES),
+        learning_curve: snapshot.learning_curve.slice(-MAX_PERSISTED_ANALYSES),
+        accuracy_by_hour: snapshot.accuracy_by_hour.slice(-MAX_PERSISTED_ANALYSES),
+        accuracy_by_strategy: snapshot.accuracy_by_strategy.slice(-MAX_PERSISTED_ANALYSES),
+        performance_by_pattern: snapshot.performance_by_pattern.slice(-MAX_PERSISTED_ANALYSES),
+        last_results: snapshot.last_results.slice(-MAX_PERSISTED_ANALYSES),
       },
     };
 
-    this.driver.setItem(PERFORMANCE_ANALYTICS_STORAGE_KEY, JSON.stringify(payload));
+    this.enqueuePersist(PERFORMANCE_ANALYTICS_STORAGE_KEY, payload);
     return now;
   }
 
@@ -218,7 +400,7 @@ export class StorageService {
         return [];
       }
 
-      return parsed.events;
+      return parsed.events.slice(-MAX_PERSISTED_EVENTS);
     } catch {
       return [];
     }
@@ -228,10 +410,10 @@ export class StorageService {
     const now = new Date().toISOString();
     const payload: PersistentHistoryImportRecord = {
       updated_at: now,
-      events,
+      events: events.slice(-MAX_PERSISTED_EVENTS),
     };
 
-    this.driver.setItem(HISTORY_IMPORT_STORAGE_KEY, JSON.stringify(payload));
+    this.enqueuePersist(HISTORY_IMPORT_STORAGE_KEY, payload);
     return now;
   }
 
@@ -251,7 +433,7 @@ export class StorageService {
         return [];
       }
 
-      return parsed.records;
+      return parsed.records.slice(-MAX_PERSISTED_BACKTESTS);
     } catch {
       return [];
     }
@@ -261,10 +443,10 @@ export class StorageService {
     const now = new Date().toISOString();
     const payload: PersistentBacktestRecord = {
       updated_at: now,
-      records,
+      records: records.slice(-MAX_PERSISTED_BACKTESTS),
     };
 
-    this.driver.setItem(BACKTEST_STORAGE_KEY, JSON.stringify(payload));
+    this.enqueuePersist(BACKTEST_STORAGE_KEY, payload);
     return now;
   }
 
@@ -280,7 +462,14 @@ export class StorageService {
       }
 
       const parsed = JSON.parse(raw) as PersistentManualSimulationRecord;
-      return parsed?.state ?? null;
+      if (!parsed?.state) {
+        return null;
+      }
+
+      return {
+        ...parsed.state,
+        records: parsed.state.records.slice(-MAX_PERSISTED_SIMULATIONS),
+      };
     } catch {
       return null;
     }
@@ -290,10 +479,13 @@ export class StorageService {
     const now = new Date().toISOString();
     const payload: PersistentManualSimulationRecord = {
       updated_at: now,
-      state,
+      state: {
+        ...state,
+        records: state.records.slice(-MAX_PERSISTED_SIMULATIONS),
+      },
     };
 
-    this.driver.setItem(MANUAL_SIMULATION_STORAGE_KEY, JSON.stringify(payload));
+    this.enqueuePersist(MANUAL_SIMULATION_STORAGE_KEY, payload);
     return now;
   }
 

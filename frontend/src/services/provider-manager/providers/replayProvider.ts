@@ -1,16 +1,19 @@
 import { DataProviderStatus, IDataProvider } from "../types";
+import { getDoubleColor } from "../../../utils/doubleColor";
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
 export class ReplayProvider implements IDataProvider {
+  private readonly replayReferenceColor = getDoubleColor(0);
+
   private currentStatus: DataProviderStatus = {
     id: "replay",
     label: "Replay",
     state: "idle",
     availability: "coming_soon",
-    message: "Estrutura de Replay pronta (sem carga de arquivos).",
+    message: `Estrutura de Replay pronta (sem carga de arquivos). Cor de referencia para numero 0: ${this.replayReferenceColor}.`,
     updatedAt: nowIso(),
   };
 

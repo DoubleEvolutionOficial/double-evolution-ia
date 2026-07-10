@@ -4,6 +4,7 @@ import {
   LiveDataProviderContract,
   SimulatorSpeed,
 } from "../types";
+import { getDoubleColor } from "../../../utils/doubleColor";
 
 const MAX_BUFFER = 128;
 
@@ -173,7 +174,7 @@ export class RealisticSimulatorProvider implements LiveDataProviderContract {
 
     const candidates: number[] = [];
     for (let i = 1; i <= 14; i += 1) {
-      const candidateColor = i % 2 === 0 ? "black" : "red";
+      const candidateColor = getDoubleColor(i);
       if (candidateColor === color) {
         candidates.push(i);
       }

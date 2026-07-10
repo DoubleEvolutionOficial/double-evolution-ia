@@ -4,6 +4,7 @@ import {
   LiveDataProviderContract,
 } from "../types";
 import { MockDataProvider } from "./mockLiveDataProvider";
+import { getDoubleColor } from "../../../utils/doubleColor";
 
 const MAX_BUFFER = 64;
 
@@ -26,10 +27,15 @@ function isValidLiveDataEvent(value: unknown): value is LiveDataEvent {
   if (color !== "red" && color !== "black" && color !== "white") {
     return false;
   }
-  if (typeof event.number !== "number") {
+  if (typeof event.number !== "number" || !Number.isInteger(event.number) || event.number < 0 || event.number > 14) {
     return false;
   }
   if (typeof event.white !== "boolean") {
+    return false;
+  }
+
+  const expectedColor = getDoubleColor(event.number);
+  if (event.color !== expectedColor || event.white !== (expectedColor === "white")) {
     return false;
   }
   if (!Array.isArray(event.sequence) || !event.sequence.every((item) => typeof item === "string")) {
@@ -40,14 +46,24 @@ function isValidLiveDataEvent(value: unknown): value is LiveDataEvent {
 }
 
 function extractEvents(payload: unknown): LiveDataEvent[] {
+  const normalize = (event: LiveDataEvent): LiveDataEvent => {
+    const color = getDoubleColor(event.number);
+    return {
+      ...event,
+      color,
+      white: color === "white",
+      sequence: [...event.sequence.slice(-7), color],
+    };
+  };
+
   if (Array.isArray(payload)) {
-    return payload.filter(isValidLiveDataEvent);
+    return payload.filter(isValidLiveDataEvent).map(normalize);
   }
 
   if (payload && typeof payload === "object") {
     const maybeEvents = (payload as { events?: unknown }).events;
     if (Array.isArray(maybeEvents)) {
-      return maybeEvents.filter(isValidLiveDataEvent);
+      return maybeEvents.filter(isValidLiveDataEvent).map(normalize);
     }
   }
 
