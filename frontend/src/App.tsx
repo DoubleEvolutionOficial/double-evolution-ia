@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeLaboratory } from "./api/laboratory";
 import { fetchHealth } from "./api/health";
 import { IntelligenceDecisionCenter } from "./components/IntelligenceDecisionCenter";
@@ -48,26 +48,23 @@ import {
 import { providerManager } from "./services/provider-manager/providerManager";
 import { ManagedProviderId, ProviderManagerSnapshot } from "./services/provider-manager/types";
 import "./App.css";
+import { JsonViewer } from "./components/JsonViewer";
 
 type RequestState = "idle" | "loading" | "success" | "error" | "offline";
 type LabSpeed = 1 | 2 | 5 | 10 | 20;
 type ImportFormat = "csv" | "json";
 type ManualEntryColor = "red" | "black" | "white";
 type ManualEntryResult = "WIN" | "LOSS" | "GALE 1" | "GALE 2";
-
-const LAB_PIPELINE_STAGES = [
-  "Recebeu Evento",
-  "Trend",
-  "Seasonality",
-  "Correlation",
-  "Consensus",
-  "Risk",
-  "Probability",
-  "Learning",
-  "Decision",
-] as const;
-
-const LAB_SPEED_OPTIONS: LabSpeed[] = [1, 2, 5, 10, 20];
+type MainView =
+  | "painel"
+  | "ao-vivo"
+  | "ia"
+  | "estrategias"
+  | "simulacao"
+  | "backtest"
+  | "historico"
+  | "estatisticas"
+  | "configuracoes";
 
 const BACKTEST_MIN_WINDOW = 6;
 
@@ -664,16 +661,7 @@ function App() {
   const [manualSimulationRecords, setManualSimulationRecords] = useState<ManualSimulationRecord[]>([]);
   const [manualBankrollCurrent, setManualBankrollCurrent] = useState(100);
   const [showHealthDetails, setShowHealthDetails] = useState(false);
-  const [activeBottomTab, setActiveBottomTab] = useState<
-    "estatisticas" | "padroes" | "performance" | "replay" | "simulacao" | "logs"
-  >("estatisticas");
-  const [isLabMode, setIsLabMode] = useState(true);
-  const [labCursor, setLabCursor] = useState(0);
-  const [isLabPlaying, setIsLabPlaying] = useState(false);
-  const [isLabLoopEnabled, setIsLabLoopEnabled] = useState(false);
-  const [labSpeed, setLabSpeed] = useState<LabSpeed>(1);
-  const [pipelineStepIndex, setPipelineStepIndex] = useState(0);
-  const [processingTimeMs, setProcessingTimeMs] = useState(0);
+  const [activeMainView, setActiveMainView] = useState<MainView>("painel");
   const [providerSnapshot, setProviderSnapshot] = useState<ProviderManagerSnapshot>(() => {
     const activeProvider = providerManager.getActiveProvider();
     const providers = providerManager.getAllStatuses();
@@ -692,13 +680,13 @@ function App() {
   const performanceAnalyticsRef = useRef<PerformanceAnalyticsSnapshot>(
     createEmptyPerformanceAnalytics()
   );
-  const pipelineTimerRef = useRef<number | null>(null);
   const learningEngineRef = useRef(new LearningEngine());
   const patternDiscoveryEngineRef = useRef(new PatternDiscoveryEngine());
   const patternRankingEngineRef = useRef(new PatternRankingEngine());
   const performanceAnalyticsEngineRef = useRef(new PerformanceAnalytics());
   const strategyEngineRef = useRef(new StrategyEngine());
   const replaySeenKeysRef = useRef<Set<string>>(new Set());
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const unsubscribe = providerManager.subscribe((snapshot) => {
@@ -921,7 +909,7 @@ function App() {
         return;
       }
 
-      if (isLabMode && providerName === "external") {
+      if (providerName === "external") {
         setAnalysisState("error");
         setAnalysisError("LAB MODE ativo: use Simulator, Replay, CSV ou WebSocket.");
         return;
@@ -952,7 +940,6 @@ function App() {
         setAnalysis(result);
         setAnalysisState("success");
         setLastAnalyzedAt(new Date());
-        setProcessingTimeMs(Math.max(1, Math.round(performance.now() - startedAt)));
         lastAnalysisSignatureRef.current = signature;
         if (patternRanking.ranked_patterns.length || patternDiscovery.patterns.length) {
           runStrategySelection(strategyMode, manualStrategy);
@@ -961,7 +948,6 @@ function App() {
         const mapped = mapErrorToState(err);
         setAnalysisState(mapped.state);
         setAnalysisError(mapped.message);
-        setProcessingTimeMs(Math.max(1, Math.round(performance.now() - startedAt)));
       } finally {
         setIsAnalyzing(false);
         isAnalyzingRef.current = false;
@@ -979,7 +965,6 @@ function App() {
       }
     },
     [
-      isLabMode,
       manualStrategy,
       patternDiscovery.patterns.length,
       patternRanking.ranked_patterns.length,
@@ -1053,6 +1038,25 @@ function App() {
       performanceAnalyticsRef.current = storedPerformance;
     }
 
+    const storedImportedHistory = storageService.loadImportedHistoryEvents();
+    if (storedImportedHistory.length) {
+      setImportedHistory(storedImportedHistory);
+      setLastImportTotal(storedImportedHistory.length);
+      setImportMessage(`Historico importado carregado (${storedImportedHistory.length} eventos).`);
+    }
+
+    const storedBacktestRecords = storageService.loadBacktestRecords();
+    if (storedBacktestRecords.length) {
+      setBacktestRecords(storedBacktestRecords);
+    }
+
+    const storedManualSimulation = storageService.loadManualSimulationState();
+    if (storedManualSimulation) {
+      setManualBankrollStart(storedManualSimulation.bankrollStart);
+      setManualBankrollCurrent(storedManualSimulation.bankrollCurrent);
+      setManualSimulationRecords(storedManualSimulation.records);
+    }
+
     refreshStorageInfo();
 
     const unsubscribe = liveDataService.subscribe((events) => {
@@ -1094,18 +1098,7 @@ function App() {
       unsubscribe();
       liveDataService.disconnect();
     };
-  }, [
-    manualStrategy,
-    patternDiscovery.patterns.length,
-    patternRanking.ranked_patterns.length,
-    refreshStorageInfo,
-    runPerformanceAnalytics,
-    runStrategySelection,
-    saveLearningNow,
-    scheduleAutoAnalyze,
-    strategyMode,
-    appendReplayHistory,
-  ]);
+  }, []);
 
   function handleConnectLiveData() {
     if (providerName === "simulator") {
@@ -1263,16 +1256,197 @@ function App() {
     }
   }
 
-  const navItems = [
-    "Dashboard",
-    "Live",
-    "IA",
-    "Estrategias",
-    "Simulacao",
-    "Backtest",
-    "Historico",
-    "Estatisticas",
-    "Configuracoes",
+  function handleOpenImportPicker() {
+    importFileInputRef.current?.click();
+  }
+
+  async function handleImportFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setImportError(null);
+    setImportMessage(`Importando ${file.name}...`);
+
+    try {
+      const content = await file.text();
+      const rows: Record<string, unknown>[] =
+        importFormat === "json" ? (JSON.parse(content) as Record<string, unknown>[]) : parseCsvRows(content);
+
+      if (!Array.isArray(rows) || !rows.length) {
+        setImportError("Arquivo sem registros validos para importacao.");
+        setImportMessage(null);
+        return;
+      }
+
+      const events: LiveDataEvent[] = [];
+      const errors: string[] = [];
+
+      rows.forEach((raw, index) => {
+        const normalized = normalizeImportedEvent(raw, events);
+        if (normalized.event) {
+          events.push(normalized.event);
+          return;
+        }
+        if (normalized.error) {
+          errors.push(`Linha ${index + 2}: ${normalized.error}`);
+        }
+      });
+
+      if (!events.length) {
+        setImportError(errors[0] ?? "Nao foi possivel importar eventos validos.");
+        setImportMessage(null);
+        return;
+      }
+
+      setImportedHistory(events);
+      setLastImportTotal(events.length);
+      setReplayCursor(0);
+      setReplayPlaying(false);
+      storageService.saveImportedHistoryEvents(events);
+      refreshStorageInfo();
+      setImportMessage(
+        `${events.length} evento(s) importado(s) com sucesso${errors.length ? ` (${errors.length} ignorado(s))` : ""}.`
+      );
+      if (errors.length) {
+        setImportError(errors[0]);
+      }
+    } catch {
+      setImportMessage(null);
+      setImportError("Falha ao ler arquivo. Verifique o formato selecionado (CSV/JSON).");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function clearImportedHistory() {
+    setImportedHistory([]);
+    setLastImportTotal(0);
+    setReplayCursor(0);
+    setReplayPlaying(false);
+    storageService.clearImportedHistoryEvents();
+    refreshStorageInfo();
+    setImportMessage("Historico importado removido.");
+    setImportError(null);
+  }
+
+  function toSignalColor(signal: "Vermelho" | "Preto" | "Branco"): "red" | "black" | "white" {
+    if (signal === "Vermelho") {
+      return "red";
+    }
+    if (signal === "Preto") {
+      return "black";
+    }
+    return "white";
+  }
+
+  function runBacktest() {
+    const sourceEvents = importedHistory.length
+      ? importedHistory
+      : replayHistory.length
+        ? replayHistory
+        : liveEvents;
+
+    if (sourceEvents.length < BACKTEST_MIN_WINDOW + 1) {
+      setBacktestMessage(`Backtest requer ao menos ${BACKTEST_MIN_WINDOW + 1} eventos validos.`);
+      setBacktestRecords([]);
+      return;
+    }
+
+    setIsBacktesting(true);
+
+    const records: BacktestRecord[] = [];
+    for (let index = BACKTEST_MIN_WINDOW; index < sourceEvents.length; index += 1) {
+      const windowEvents = sourceEvents.slice(index - BACKTEST_MIN_WINDOW, index);
+      const current = sourceEvents[index];
+      const signal = suggestColor(windowEvents);
+      const signalColor = toSignalColor(signal);
+      const matches = windowEvents.filter((event) => event.color === signalColor).length;
+      const confidence = clampPercent(Math.round((matches / windowEvents.length) * 100));
+      const risk = clampPercent(100 - confidence + (current.white ? 6 : 0));
+      const outcome = current.color === signalColor ? "win" : "loss";
+
+      records.push({
+        timestamp: current.timestamp,
+        signal,
+        confidence,
+        risk,
+        result: outcome === "win" ? "Acerto" : `Erro (${eventColorLabel(current.color)})`,
+        outcome,
+        pattern: `streak-${computeLongestColorStreak(windowEvents)}`,
+      });
+    }
+
+    setBacktestRecords(records);
+    storageService.saveBacktestRecords(records);
+    refreshStorageInfo();
+    setBacktestMessage(`Backtest concluido: ${records.length} entrada(s).`);
+    setIsBacktesting(false);
+  }
+
+  function clearBacktest() {
+    setBacktestRecords([]);
+    setBacktestMessage("Backtest limpo.");
+    storageService.clearBacktestRecords();
+    refreshStorageInfo();
+  }
+
+  function registerManualSimulationEntry() {
+    const delta = manualDeltaByResult(manualEntryResult);
+    const updatedBankroll = Number((manualBankrollCurrent + delta).toFixed(2));
+
+    const nextRecord: ManualSimulationRecord = {
+      timestamp: new Date().toISOString(),
+      entry: manualEntryColor,
+      result: manualEntryResult,
+      amountDelta: delta,
+      bankrollAfter: updatedBankroll,
+    };
+
+    const nextRecords = [nextRecord, ...manualSimulationRecords].slice(0, 120);
+    setManualBankrollCurrent(updatedBankroll);
+    setManualSimulationRecords(nextRecords);
+    storageService.saveManualSimulationState({
+      bankrollStart: manualBankrollStart,
+      bankrollCurrent: updatedBankroll,
+      records: nextRecords,
+    });
+    refreshStorageInfo();
+  }
+
+  function resetManualSimulation() {
+    setManualBankrollCurrent(manualBankrollStart);
+    setManualSimulationRecords([]);
+    storageService.clearManualSimulationState();
+    refreshStorageInfo();
+  }
+
+  function handleSimulationStart() {
+    if (providerName !== "simulator") {
+      handleProviderChange("simulator");
+    }
+    handleSimulatorStart();
+  }
+
+  function handleSimulationPause() {
+    handleSimulatorPause();
+  }
+
+  function handleSimulationReset() {
+    handleSimulatorReset();
+  }
+
+  const navItems: Array<{ id: MainView; label: string }> = [
+    { id: "painel", label: "Painel" },
+    { id: "ao-vivo", label: "Ao vivo" },
+    { id: "ia", label: "IA" },
+    { id: "estrategias", label: "Estratégias" },
+    { id: "simulacao", label: "Simulação" },
+    { id: "backtest", label: "Backtest" },
+    { id: "historico", label: "Histórico" },
+    { id: "estatisticas", label: "Estatísticas" },
+    { id: "configuracoes", label: "Configurações" },
   ];
 
   const headerAccuracy = `${performanceAnalytics.overall_accuracy.toFixed(1)}%`;
@@ -1367,140 +1541,558 @@ function App() {
 
   const managedProviders: ManagedProviderId[] = ["simulator", "replay", "csv", "websocket"];
   const activeManagedStatus = providerSnapshot.activeStatus;
-  const labEvents = useMemo(() => {
+  const managerNeedsConfiguration = activeManagedStatus.availability !== "available";
+  const liveProviderNeedsConfiguration = providerStatus.state === "not_configured";
+  const managerStatusMessage = managerNeedsConfiguration
+    ? `${managedProviderLabel(providerSnapshot.activeProvider)} ainda nao esta totalmente configurado.`
+    : activeManagedStatus.message;
+  const liveStatusMessage = liveProviderNeedsConfiguration
+    ? `${providerLabel(providerName)} requer configuracao para operar.`
+    : providerStatus.message;
+
+  const historyEvents = useMemo(() => {
+    if (liveEvents.length) {
+      return liveEvents;
+    }
     if (replayHistory.length) {
       return replayHistory;
     }
-    return liveEvents;
-  }, [liveEvents, replayHistory]);
-  const safeLabCursor = labEvents.length ? Math.max(0, Math.min(labCursor, labEvents.length - 1)) : 0;
-  const currentLabEvent = labEvents.length ? labEvents[safeLabCursor] : null;
-  const pipelineLastIndex = LAB_PIPELINE_STAGES.length - 1;
-  const scoreGeral = Number(
-    (
-      (trendValue + seasonalityValue + correlationValue + consensusValue + probabilityValue + learningValue) /
-      6
-    ).toFixed(1)
-  );
-  const debugStatus =
-    analysisState === "loading"
-      ? "processando"
-      : analysisState === "success"
-        ? "ativo"
-        : analysisState === "offline"
-          ? "offline"
-          : "aguardando";
+    return importedHistory;
+  }, [importedHistory, liveEvents, replayHistory]);
 
-  useEffect(() => {
-    if (!labEvents.length) {
-      setLabCursor(0);
-      setIsLabPlaying(false);
-      return;
-    }
+  const statisticsFromEvents = useMemo(() => {
+    const total = historyEvents.length;
+    const red = historyEvents.filter((event) => event.color === "red").length;
+    const black = historyEvents.filter((event) => event.color === "black").length;
+    const white = historyEvents.filter((event) => event.color === "white").length;
 
-    setLabCursor((previous) => Math.min(previous, labEvents.length - 1));
-  }, [labEvents.length]);
-
-  useEffect(() => {
-    if (!isLabPlaying || !labEvents.length) {
-      return;
-    }
-
-    const tickMs = Math.max(80, Math.round(900 / labSpeed));
-    const timer = window.setInterval(() => {
-      setLabCursor((previous) => {
-        if (previous >= labEvents.length - 1) {
-          if (isLabLoopEnabled) {
-            return 0;
-          }
-          setIsLabPlaying(false);
-          return previous;
-        }
-        return previous + 1;
-      });
-    }, tickMs);
-
-    return () => {
-      window.clearInterval(timer);
+    const toRatio = (value: number) => (total ? Number(((value / total) * 100).toFixed(1)) : 0);
+    return {
+      total,
+      red,
+      black,
+      white,
+      redPct: toRatio(red),
+      blackPct: toRatio(black),
+      whitePct: toRatio(white),
     };
-  }, [isLabLoopEnabled, isLabPlaying, labEvents.length, labSpeed]);
+  }, [historyEvents]);
+  const mainContent = (() => {
+    if (activeMainView === "painel") {
+      return (
+        <section className="center-zone">
+          <Panel title="Painel das Pedras" subtitle="Grid profissional com atualizacao automatica por evento">
+            <StonesGrid events={liveEvents} />
+          </Panel>
 
-  useEffect(() => {
-    if (pipelineTimerRef.current !== null) {
-      window.clearInterval(pipelineTimerRef.current);
-      pipelineTimerRef.current = null;
+          <div className="ia-column">
+            <IntelligenceDecisionCenter
+              status={centerStatus}
+              suggestedColor={suggestedColor}
+              confidence={confidencePercent}
+              riskLabel={riskLabel}
+              engineIndicators={engineIndicators}
+              justifications={decisionJustifications}
+              streamStatus={liveConnected ? "online" : "offline"}
+            />
+
+            <Panel title="Resumo operacional" subtitle="Status, provider, eventos, confianca e decisao atual">
+              <div className="provider-availability-grid">
+                <article className="provider-availability-card">
+                  <strong>Status</strong>
+                  <span>{headerStatus}</span>
+                </article>
+                <article className="provider-availability-card">
+                  <strong>Provider</strong>
+                  <span>{providerLabel(providerName)}</span>
+                </article>
+                <article className="provider-availability-card">
+                  <strong>Eventos</strong>
+                  <span>{liveEvents.length}</span>
+                </article>
+                <article className="provider-availability-card">
+                  <strong>Confianca</strong>
+                  <span>{confidencePercent.toFixed(1)}%</span>
+                </article>
+                <article className="provider-availability-card">
+                  <strong>Learning</strong>
+                  <span>{learning.learning_score.toFixed(1)}</span>
+                </article>
+                <article className="provider-availability-card">
+                  <strong>Decisao</strong>
+                  <span>{tradingDecision}</span>
+                </article>
+              </div>
+
+              <div className="action-row">
+                <button
+                  className="analyze-button"
+                  type="button"
+                  onClick={() => setShowHealthDetails((previous) => !previous)}
+                >
+                  {showHealthDetails ? "Ocultar health" : "Exibir health"}
+                </button>
+                <button
+                  className="analyze-button"
+                  type="button"
+                  onClick={handleCheckHealth}
+                  disabled={isCheckingHealth}
+                >
+                  {isCheckingHealth ? "Consultando..." : "Atualizar health"}
+                </button>
+              </div>
+
+              {showHealthDetails ? (
+                health ? <JsonViewer data={health} /> : <p className="empty-state">Sem status consultado.</p>
+              ) : null}
+              {healthError ? <p className="error-text">{healthError}</p> : null}
+            </Panel>
+          </div>
+        </section>
+      );
     }
 
-    if (!currentLabEvent) {
-      setPipelineStepIndex(0);
-      return;
+    if (activeMainView === "ao-vivo") {
+      return (
+        <section className="center-zone">
+          <Panel title="Ao vivo" subtitle="Conexao de providers e comandos operacionais existentes">
+            <div className="action-row">
+              <label className="provider-select">
+                Fonte live
+                <select
+                  value={providerName}
+                  onChange={(event) => handleProviderChange(event.target.value as LiveDataProviderName)}
+                >
+                  {availableProviders.map((name) => (
+                    <option key={name} value={name}>
+                      {providerLabel(name)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button className="analyze-button" type="button" onClick={handleConnectLiveData} disabled={liveConnected}>
+                Conectar
+              </button>
+              <button className="analyze-button" type="button" onClick={handleDisconnectLiveData} disabled={!liveConnected}>
+                Desconectar
+              </button>
+              <button className="analyze-button" type="button" onClick={handleAnalyze} disabled={isAnalyzing || !liveEvents.length}>
+                {isAnalyzing ? "Analisando..." : "Analisar"}
+              </button>
+            </div>
+
+            <div className="status-line">
+              <p className="status-label">Status live</p>
+              <p className="status-label">{providerStatus.state}</p>
+            </div>
+            <p className="empty-state">{liveStatusMessage}</p>
+          </Panel>
+
+          <div className="ia-column">
+            <Panel title="Provider Manager" subtitle="Simulator, Replay, CSV e WebSocket">
+              <div className="action-row">
+                <label className="provider-select">
+                  Provider manager
+                  <select
+                    value={providerSnapshot.activeProvider}
+                    onChange={(event) => handleManagerProviderChange(event.target.value as ManagedProviderId)}
+                  >
+                    {managedProviders.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {managedProviderLabel(provider)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <button className="analyze-button" type="button" onClick={handleManagerConnect}>
+                  Connect
+                </button>
+                <button className="analyze-button" type="button" onClick={handleManagerDisconnect}>
+                  Disconnect
+                </button>
+                <button className="analyze-button" type="button" onClick={handleManagerStart}>
+                  Start
+                </button>
+                <button className="analyze-button" type="button" onClick={handleManagerPause}>
+                  Pause
+                </button>
+                <button className="analyze-button" type="button" onClick={handleManagerReset}>
+                  Reset
+                </button>
+              </div>
+
+              <div className="status-line">
+                <p className="status-label">Estado</p>
+                <p className="status-label">{providerStateLabel(activeManagedStatus.state)}</p>
+              </div>
+              <p className="empty-state">{managerStatusMessage}</p>
+
+              <div className="provider-availability-grid">
+                {managedProviders.map((provider) => {
+                  const itemStatus = providerSnapshot.providers[provider];
+                  return (
+                    <article className="provider-availability-card" key={provider}>
+                      <strong>{managedProviderLabel(provider)}</strong>
+                      <span>{providerStateLabel(itemStatus.state)}</span>
+                      <span>{providerAvailabilityLabel(itemStatus.availability)}</span>
+                    </article>
+                  );
+                })}
+              </div>
+            </Panel>
+          </div>
+        </section>
+      );
     }
 
-    setPipelineStepIndex(0);
-    let nextStep = 0;
-    const timer = window.setInterval(() => {
-      nextStep += 1;
-      if (nextStep >= LAB_PIPELINE_STAGES.length) {
-        setPipelineStepIndex(pipelineLastIndex);
-        window.clearInterval(timer);
-        pipelineTimerRef.current = null;
-        return;
-      }
-      setPipelineStepIndex(nextStep);
-    }, isAnalyzing || analysisState === "loading" ? 180 : 260);
+    if (activeMainView === "ia") {
+      return (
+        <section className="center-zone">
+          <IntelligenceDecisionCenter
+            status={centerStatus}
+            suggestedColor={suggestedColor}
+            confidence={confidencePercent}
+            riskLabel={riskLabel}
+            engineIndicators={engineIndicators}
+            justifications={decisionJustifications}
+            streamStatus={liveConnected ? "online" : "offline"}
+          />
 
-    pipelineTimerRef.current = timer;
-
-    return () => {
-      window.clearInterval(timer);
-      if (pipelineTimerRef.current === timer) {
-        pipelineTimerRef.current = null;
-      }
-    };
-  }, [analysisState, currentLabEvent, isAnalyzing, pipelineLastIndex, safeLabCursor]);
-
-  function handleLabPlay() {
-    if (!labEvents.length) {
-      return;
+          <div className="ia-column">
+            <Panel title="Atualizacao IA" subtitle="Dados operacionais disponiveis no momento">
+              <div className="provider-availability-grid">
+                <article className="provider-availability-card">
+                  <strong>Trend</strong>
+                  <span>{trendValue.toFixed(1)}%</span>
+                </article>
+                <article className="provider-availability-card">
+                  <strong>Probability</strong>
+                  <span>{probabilityValue.toFixed(1)}%</span>
+                </article>
+                <article className="provider-availability-card">
+                  <strong>Consensus</strong>
+                  <span>{consensusValue.toFixed(1)}%</span>
+                </article>
+                <article className="provider-availability-card">
+                  <strong>Learning</strong>
+                  <span>{learningValue.toFixed(1)}%</span>
+                </article>
+              </div>
+              <div className="action-row">
+                <button className="analyze-button" type="button" onClick={handleAnalyze} disabled={isAnalyzing || !liveEvents.length}>
+                  {isAnalyzing ? "Analisando..." : "Atualizar IA"}
+                </button>
+              </div>
+              {analysisError ? <p className="error-text">{analysisError}</p> : null}
+            </Panel>
+          </div>
+        </section>
+      );
     }
 
-    if (safeLabCursor >= labEvents.length - 1) {
-      setLabCursor(0);
+    if (activeMainView === "estrategias") {
+      return (
+        <section className="center-zone">
+          <Panel title="Estrategias" subtitle="Selecao de estrategia e descoberta de padroes">
+            <div className="action-row">
+              <button className="analyze-button" type="button" onClick={handleAutoStrategy}>
+                Modo automatico
+              </button>
+              <button className="analyze-button" type="button" onClick={handleManualStrategy}>
+                Modo manual
+              </button>
+              <label className="provider-select">
+                Estrategia manual
+                <select
+                  value={manualStrategy}
+                  onChange={(event) => setManualStrategy(event.target.value as typeof manualStrategy)}
+                >
+                  <option value="Conservative">Conservative</option>
+                  <option value="Balanced">Balanced</option>
+                  <option value="Aggressive">Aggressive</option>
+                  <option value="Adaptive">Adaptive</option>
+                  <option value="Experimental">Experimental</option>
+                </select>
+              </label>
+              <button className="analyze-button" type="button" onClick={handleScanHistory} disabled={isScanningPatterns}>
+                {isScanningPatterns ? "Escaneando..." : "Escanear historico"}
+              </button>
+            </div>
+
+            <div className="provider-availability-grid">
+              <article className="provider-availability-card">
+                <strong>Modo</strong>
+                <span>{strategyMode}</span>
+              </article>
+              <article className="provider-availability-card">
+                <strong>Melhor estrategia</strong>
+                <span>{strategyResult.best_strategy}</span>
+              </article>
+              <article className="provider-availability-card">
+                <strong>Confianca</strong>
+                <span>{strategyResult.confidence.toFixed(1)}%</span>
+              </article>
+              <article className="provider-availability-card">
+                <strong>Win rate esperado</strong>
+                <span>{strategyResult.expected_win_rate.toFixed(1)}%</span>
+              </article>
+            </div>
+
+            {scanMessage ? <p className="empty-state">{scanMessage}</p> : null}
+          </Panel>
+
+          <div className="ia-column">
+            <Panel title="Simulacao manual" subtitle="Somente simulacao local, sem apostas reais">
+              <div className="action-row">
+                <label className="provider-select">
+                  Entrada
+                  <select
+                    value={manualEntryColor}
+                    onChange={(event) => setManualEntryColor(event.target.value as ManualEntryColor)}
+                  >
+                    <option value="red">Vermelho</option>
+                    <option value="black">Preto</option>
+                    <option value="white">Branco</option>
+                  </select>
+                </label>
+                <label className="provider-select">
+                  Resultado
+                  <select
+                    value={manualEntryResult}
+                    onChange={(event) => setManualEntryResult(event.target.value as ManualEntryResult)}
+                  >
+                    <option value="WIN">WIN</option>
+                    <option value="LOSS">LOSS</option>
+                    <option value="GALE 1">GALE 1</option>
+                    <option value="GALE 2">GALE 2</option>
+                  </select>
+                </label>
+                <button className="analyze-button" type="button" onClick={registerManualSimulationEntry}>
+                  Registrar
+                </button>
+                <button className="analyze-button" type="button" onClick={resetManualSimulation}>
+                  Resetar
+                </button>
+              </div>
+
+              <div className="status-line">
+                <p className="status-label">Banca inicial</p>
+                <p className="status-label">{manualBankrollStart.toFixed(2)}</p>
+              </div>
+              <div className="status-line">
+                <p className="status-label">Banca atual</p>
+                <p className="status-label">{manualBankrollCurrent.toFixed(2)}</p>
+              </div>
+
+              {manualSimulationRecords.length ? (
+                <div className="provider-availability-grid">
+                  {manualSimulationRecords.slice(0, 6).map((record) => (
+                    <article className="provider-availability-card" key={`${record.timestamp}-${record.result}`}>
+                      <strong>{record.result}</strong>
+                      <span>{eventColorLabel(record.entry)}</span>
+                      <span>{record.bankrollAfter.toFixed(2)}</span>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-state">Sem registros de simulacao manual.</p>
+              )}
+            </Panel>
+          </div>
+        </section>
+      );
     }
-    setIsLabPlaying(true);
-  }
 
-  function handleLabPause() {
-    setIsLabPlaying(false);
-  }
+    if (activeMainView === "simulacao") {
+      return (
+        <section className="center-zone">
+          <Panel title="Simulacao" subtitle="Controle do SimulatorProvider sem apostas reais">
+            <div className="action-row">
+              <button className="analyze-button" type="button" onClick={handleSimulationStart}>
+                Iniciar
+              </button>
+              <button className="analyze-button" type="button" onClick={handleSimulationPause}>
+                Pausar
+              </button>
+              <button className="analyze-button" type="button" onClick={handleSimulationReset}>
+                Resetar
+              </button>
+              <label className="provider-select">
+                Velocidade
+                <select
+                  value={simulatorSpeed}
+                  onChange={(event) => handleSimulatorSpeedChange(event.target.value as SimulatorSpeed)}
+                >
+                  <option value="lento">lento</option>
+                  <option value="normal">normal</option>
+                  <option value="rapido">rapido</option>
+                </select>
+              </label>
+            </div>
 
-  function handleLabPreviousEvent() {
-    if (!labEvents.length) {
-      return;
+            <div className="status-line">
+              <p className="status-label">Provider atual</p>
+              <p className="status-label">{providerLabel(providerName)}</p>
+            </div>
+            <div className="status-line">
+              <p className="status-label">Status</p>
+              <p className="status-label">{providerStatus.state}</p>
+            </div>
+            <p className="empty-state">Simulacao local apenas para testes internos, sem automacao de apostas.</p>
+          </Panel>
+
+          <div className="ia-column">
+            <Panel title="Pedras da simulacao" subtitle="Eventos do simulator refletidos automaticamente no grid">
+              <StonesGrid events={liveEvents} />
+            </Panel>
+          </div>
+        </section>
+      );
     }
 
-    setIsLabPlaying(false);
-    setLabCursor((previous) => {
-      if (previous <= 0) {
-        return isLabLoopEnabled ? labEvents.length - 1 : 0;
-      }
-      return previous - 1;
-    });
-  }
+    if (activeMainView === "backtest") {
+      return (
+        <section className="center-zone">
+          <Panel title="Backtest" subtitle="Importacao CSV/JSON, replay e execucao do backtest">
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept={importFormat === "csv" ? ".csv,text/csv" : ".json,application/json"}
+              onChange={handleImportFileChange}
+              style={{ display: "none" }}
+            />
 
-  function handleLabNextEvent() {
-    if (!labEvents.length) {
-      return;
+            <div className="action-row">
+              <label className="provider-select">
+                Formato
+                <select
+                  value={importFormat}
+                  onChange={(event) => setImportFormat(event.target.value as ImportFormat)}
+                >
+                  <option value="csv">CSV</option>
+                  <option value="json">JSON</option>
+                </select>
+              </label>
+              <button className="analyze-button" type="button" onClick={handleOpenImportPicker}>
+                Escolher arquivo
+              </button>
+              <button className="analyze-button" type="button" onClick={runBacktest} disabled={isBacktesting}>
+                {isBacktesting ? "Executando..." : "Executar backtest"}
+              </button>
+              <button className="analyze-button" type="button" onClick={clearBacktest}>
+                Limpar backtest
+              </button>
+              <button className="analyze-button" type="button" onClick={clearImportedHistory}>
+                Limpar importado
+              </button>
+            </div>
+
+            {importMessage ? <p className="empty-state">{importMessage}</p> : null}
+            {importError ? <p className="error-text">{importError}</p> : null}
+            {backtestMessage ? <p className="empty-state">{backtestMessage}</p> : null}
+
+            <div className="provider-availability-grid">
+              <article className="provider-availability-card">
+                <strong>Eventos importados</strong>
+                <span>{lastImportTotal}</span>
+              </article>
+              <article className="provider-availability-card">
+                <strong>Registros backtest</strong>
+                <span>{backtestRecords.length}</span>
+              </article>
+            </div>
+          </Panel>
+
+          <div className="ia-column">
+            {importedHistory.length ? (
+              <ReplayTimeline events={importedHistory} />
+            ) : (
+              <Panel title="Replay" subtitle="Aguardando importacao de arquivo para replay">
+                <p className="empty-state">Nenhum arquivo importado ainda.</p>
+              </Panel>
+            )}
+          </div>
+        </section>
+      );
     }
 
-    setIsLabPlaying(false);
-    setLabCursor((previous) => {
-      if (previous >= labEvents.length - 1) {
-        return isLabLoopEnabled ? 0 : previous;
-      }
-      return previous + 1;
-    });
-  }
+    if (activeMainView === "historico") {
+      return (
+        <section className="center-zone">
+          <Panel title="Historico" subtitle="Eventos vindos do LiveDataService ou do StorageService">
+            <StonesGrid events={historyEvents} />
+          </Panel>
+
+          <div className="ia-column">
+            <ReplayTimeline events={historyEvents} />
+          </div>
+        </section>
+      );
+    }
+
+    if (activeMainView === "estatisticas") {
+      return (
+        <section className="center-zone">
+          <Panel title="Estatisticas" subtitle="Calculo em tempo real a partir dos eventos disponiveis">
+            <div className="provider-availability-grid">
+              <article className="provider-availability-card">
+                <strong>Total</strong>
+                <span>{statisticsFromEvents.total}</span>
+              </article>
+              <article className="provider-availability-card">
+                <strong>Vermelho</strong>
+                <span>{statisticsFromEvents.red} ({statisticsFromEvents.redPct}%)</span>
+              </article>
+              <article className="provider-availability-card">
+                <strong>Preto</strong>
+                <span>{statisticsFromEvents.black} ({statisticsFromEvents.blackPct}%)</span>
+              </article>
+              <article className="provider-availability-card">
+                <strong>Branco</strong>
+                <span>{statisticsFromEvents.white} ({statisticsFromEvents.whitePct}%)</span>
+              </article>
+            </div>
+          </Panel>
+        </section>
+      );
+    }
+
+    return (
+      <section className="center-zone">
+        <Panel title="Configuracoes" subtitle="Controles existentes de persistencia e ambiente">
+          <div className="status-line">
+            <p className="status-label">Storage status</p>
+            <p className="status-label">{storageInfo.status}</p>
+          </div>
+          <div className="status-line">
+            <p className="status-label">Ultimo save</p>
+            <p className="status-label">{storageInfo.last_save ?? "-"}</p>
+          </div>
+          <div className="status-line">
+            <p className="status-label">Total de registros</p>
+            <p className="status-label">{storageInfo.total_records}</p>
+          </div>
+
+          <div className="action-row">
+            <button className="analyze-button" type="button" onClick={saveLearningNow}>
+              Salvar memoria
+            </button>
+            <button className="analyze-button" type="button" onClick={refreshStorageInfo}>
+              Atualizar storage
+            </button>
+            <button className="analyze-button" type="button" onClick={clearLearningMemory}>
+              Limpar memoria
+            </button>
+          </div>
+
+          {storageMessage ? <p className="empty-state">{storageMessage}</p> : null}
+          <p className="empty-state">Em desenvolvimento: configuracoes avancadas de integracao externa.</p>
+        </Panel>
+      </section>
+    );
+  })();
 
   return (
     <main className="pro-dashboard">
@@ -1510,14 +2102,15 @@ function App() {
         <nav className="sidebar-nav" aria-label="Main navigation">
           {navItems.map((item) => (
             <button
-              key={item}
+              key={item.id}
               type="button"
-              className={`nav-item ${item === "Dashboard" ? "nav-item-active" : ""}`}
+              className={`nav-item ${activeMainView === item.id ? "nav-item-active" : ""}`}
+              onClick={() => setActiveMainView(item.id)}
             >
               <span className="nav-icon" aria-hidden="true">
-                {item.slice(0, 2).toUpperCase()}
+                {item.label.slice(0, 2).toUpperCase()}
               </span>
-              <span>{item}</span>
+              <span>{item.label}</span>
             </button>
           ))}
         </nav>
@@ -1561,423 +2154,7 @@ function App() {
           </div>
         </header>
 
-        <section className="center-zone">
-          <Panel title="Painel das Pedras" subtitle="Grid profissional com atualizacao automatica por evento">
-            <StonesGrid events={liveEvents} />
-          </Panel>
-
-          <div className="ia-column">
-            <Panel title="LAB MODE" subtitle="Laboratorio isolado para testes com Replay, Simulator, CSV e WebSocket">
-              <div className="lab-mode-row">
-                <label className="lab-mode-toggle" htmlFor="lab-mode-toggle">
-                  <input
-                    id="lab-mode-toggle"
-                    type="checkbox"
-                    checked={isLabMode}
-                    onChange={(event) => setIsLabMode(event.target.checked)}
-                  />
-                  <span>{isLabMode ? "Laboratorio ativo" : "Laboratorio inativo"}</span>
-                </label>
-                <span className={`lab-mode-pill ${isLabMode ? "lab-mode-pill-active" : "lab-mode-pill-inactive"}`}>
-                  {isLabMode ? "test environment" : "modo misto"}
-                </span>
-              </div>
-
-              <div className="lab-source-grid">
-                {managedProviders.map((provider) => {
-                  const itemStatus = providerSnapshot.providers[provider];
-                  const isActive = providerSnapshot.activeProvider === provider;
-                  return (
-                    <button
-                      key={provider}
-                      type="button"
-                      className={`lab-source-card ${isActive ? "lab-source-card-active" : ""}`}
-                      onClick={() => handleManagerProviderChange(provider)}
-                    >
-                      <strong>{managedProviderLabel(provider)}</strong>
-                      <span>{providerStateLabel(itemStatus.state)}</span>
-                      <small>{providerAvailabilityLabel(itemStatus.availability)}</small>
-                    </button>
-                  );
-                })}
-              </div>
-            </Panel>
-
-            <Panel title="Evento Atual" subtitle="Leitura do evento sob analise no laboratorio">
-              <div className="lab-event-grid">
-                <article className="lab-event-card">
-                  <span>Evento</span>
-                  <strong>{currentLabEvent ? `#${safeLabCursor + 1}` : "-"}</strong>
-                </article>
-                <article className="lab-event-card">
-                  <span>Horario</span>
-                  <strong>{currentLabEvent ? formatClock(new Date(currentLabEvent.timestamp)) : "-"}</strong>
-                </article>
-                <article className="lab-event-card">
-                  <span>Numero</span>
-                  <strong>{currentLabEvent ? currentLabEvent.number : "-"}</strong>
-                </article>
-                <article className="lab-event-card">
-                  <span>Cor</span>
-                  <strong
-                    className={`lab-event-color-${
-                      currentLabEvent ? eventColorTone(currentLabEvent.color) : "white"
-                    }`}
-                  >
-                    {currentLabEvent ? eventColorLabel(currentLabEvent.color) : "-"}
-                  </strong>
-                </article>
-                <article className="lab-event-card">
-                  <span>Branco</span>
-                  <strong>{currentLabEvent ? (currentLabEvent.white ? "Sim" : "Nao") : "-"}</strong>
-                </article>
-                <article className="lab-event-card lab-event-card-sequence">
-                  <span>Sequencia</span>
-                  <strong>
-                    {currentLabEvent && currentLabEvent.sequence.length
-                      ? currentLabEvent.sequence.slice(-8).join(" > ")
-                      : "-"}
-                  </strong>
-                </article>
-              </div>
-            </Panel>
-
-            <Panel title="Pipeline" subtitle="Estado da IA em tempo real durante o processamento">
-              <div className="lab-pipeline-flow" aria-label="Pipeline horizontal do laboratorio">
-                {LAB_PIPELINE_STAGES.map((stage, index) => {
-                  const tone =
-                    index === pipelineStepIndex ? "active" : index < pipelineStepIndex ? "done" : "idle";
-                  return (
-                    <div className="lab-pipeline-node-wrap" key={stage}>
-                      <article className={`lab-pipeline-node lab-pipeline-node-${tone}`}>
-                        <span>{stage}</span>
-                      </article>
-                      {index < pipelineLastIndex ? <span className="lab-pipeline-arrow">→</span> : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </Panel>
-
-            <Panel title="Painel de Debug" subtitle="Apenas metricas operacionais, sem exibicao de regras internas">
-              <div className="lab-debug-grid">
-                <article className="lab-debug-card">
-                  <span>tempo processamento</span>
-                  <strong>{processingTimeMs ? `${processingTimeMs} ms` : "-"}</strong>
-                </article>
-                <article className="lab-debug-card">
-                  <span>score geral</span>
-                  <strong>{scoreGeral.toFixed(1)}%</strong>
-                </article>
-                <article className="lab-debug-card">
-                  <span>confianca</span>
-                  <strong>{confidencePercent.toFixed(1)}%</strong>
-                </article>
-                <article className="lab-debug-card">
-                  <span>risco</span>
-                  <strong>{riskPercent.toFixed(1)}%</strong>
-                </article>
-                <article className="lab-debug-card">
-                  <span>status</span>
-                  <strong>{debugStatus}</strong>
-                </article>
-              </div>
-            </Panel>
-
-            <Panel title="Controles" subtitle="Play, Pause, navegacao de evento, velocidade e loop">
-              <div className="lab-controls-row">
-                <button className="analyze-button" type="button" onClick={handleLabPlay} disabled={!labEvents.length}>
-                  Play
-                </button>
-                <button className="analyze-button" type="button" onClick={handleLabPause}>
-                  Pause
-                </button>
-                <button
-                  className="analyze-button"
-                  type="button"
-                  onClick={handleLabNextEvent}
-                  disabled={!labEvents.length}
-                >
-                  Proximo Evento
-                </button>
-                <button
-                  className="analyze-button"
-                  type="button"
-                  onClick={handleLabPreviousEvent}
-                  disabled={!labEvents.length}
-                >
-                  Evento Anterior
-                </button>
-              </div>
-
-              <div className="lab-controls-row">
-                <label className="provider-select">
-                  Velocidade
-                  <select
-                    value={String(labSpeed)}
-                    onChange={(event) => setLabSpeed(Number(event.target.value) as LabSpeed)}
-                  >
-                    {LAB_SPEED_OPTIONS.map((speed) => (
-                      <option key={speed} value={speed}>
-                        {speed}x
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="lab-loop-toggle" htmlFor="lab-loop-toggle">
-                  <input
-                    id="lab-loop-toggle"
-                    type="checkbox"
-                    checked={isLabLoopEnabled}
-                    onChange={(event) => setIsLabLoopEnabled(event.target.checked)}
-                  />
-                  <span>Loop</span>
-                </label>
-
-                <span className="lab-cursor-meta">
-                  Evento atual: {labEvents.length ? `${safeLabCursor + 1}/${labEvents.length}` : "0/0"}
-                </span>
-              </div>
-            </Panel>
-
-            <IntelligenceDecisionCenter
-              status={centerStatus}
-              suggestedColor={suggestedColor}
-              confidence={confidencePercent}
-              riskLabel={riskLabel}
-              engineIndicators={engineIndicators}
-              justifications={decisionJustifications}
-              streamStatus={liveConnected ? "online" : "offline"}
-            />
-
-            <Panel title="Controle Operacional" subtitle="Sem novas funcionalidades, apenas comandos existentes">
-              <div className="action-row">
-                <label className="provider-select">
-                  Fonte de dados
-                  <select
-                    value={providerName}
-                    onChange={(event) =>
-                      handleProviderChange(event.target.value as LiveDataProviderName)
-                    }
-                  >
-                    {availableProviders.map((name) => (
-                      <option key={name} value={name}>
-                        {providerLabel(name)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <button
-                  className="analyze-button"
-                  type="button"
-                  onClick={handleConnectLiveData}
-                  disabled={liveConnected}
-                >
-                  Conectar
-                </button>
-                <button
-                  className="analyze-button"
-                  type="button"
-                  onClick={handleDisconnectLiveData}
-                  disabled={!liveConnected}
-                >
-                  Desconectar
-                </button>
-                <button
-                  className="analyze-button"
-                  type="button"
-                  onClick={handleAnalyze}
-                  disabled={isAnalyzing || !liveEvents.length}
-                >
-                  {isAnalyzing ? "Analisando..." : "Analisar"}
-                </button>
-                {isAnalyzing ? <span className="spinner" aria-label="Analisando" /> : null}
-
-                {providerName === "manual" ? (
-                  <button
-                    className="analyze-button"
-                    type="button"
-                    onClick={pushManualEvent}
-                    disabled={!liveConnected}
-                  >
-                    Inserir evento manual
-                  </button>
-                ) : null}
-
-                {providerName === "simulator" ? (
-                  <>
-                    <label className="provider-select">
-                      Velocidade
-                      <select
-                        value={simulatorSpeed}
-                        onChange={(event) =>
-                          handleSimulatorSpeedChange(event.target.value as SimulatorSpeed)
-                        }
-                      >
-                        <option value="lento">lento</option>
-                        <option value="normal">normal</option>
-                        <option value="rapido">rapido</option>
-                      </select>
-                    </label>
-                    <button className="analyze-button" type="button" onClick={handleSimulatorStart}>
-                      Iniciar simulacao
-                    </button>
-                    <button className="analyze-button" type="button" onClick={handleSimulatorPause}>
-                      Pausar simulacao
-                    </button>
-                    <button className="analyze-button" type="button" onClick={handleSimulatorReset}>
-                      Resetar simulacao
-                    </button>
-                  </>
-                ) : null}
-              </div>
-
-              <div className="provider-manager-panel">
-                <div className="status-line">
-                  <p className="status-label">Provider ativo (manager)</p>
-                  <p className="status-label">{managedProviderLabel(providerSnapshot.activeProvider)}</p>
-                </div>
-                <div className="status-line">
-                  <p className="status-label">Estado</p>
-                  <p className="status-label">{providerStateLabel(activeManagedStatus.state)}</p>
-                </div>
-                <div className="status-line">
-                  <p className="status-label">Disponibilidade</p>
-                  <p className="status-label">
-                    {providerAvailabilityLabel(activeManagedStatus.availability)}
-                  </p>
-                </div>
-
-                <div className="action-row">
-                  <label className="provider-select">
-                    Fonte (manager)
-                    <select
-                      value={providerSnapshot.activeProvider}
-                      onChange={(event) =>
-                        handleManagerProviderChange(event.target.value as ManagedProviderId)
-                      }
-                    >
-                      {managedProviders.map((provider) => (
-                        <option key={provider} value={provider}>
-                          {managedProviderLabel(provider)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <button className="analyze-button" type="button" onClick={handleManagerConnect}>
-                    Connect
-                  </button>
-                  <button className="analyze-button" type="button" onClick={handleManagerDisconnect}>
-                    Disconnect
-                  </button>
-                  <button className="analyze-button" type="button" onClick={handleManagerStart}>
-                    Start
-                  </button>
-                  <button className="analyze-button" type="button" onClick={handleManagerPause}>
-                    Pause
-                  </button>
-                  <button className="analyze-button" type="button" onClick={handleManagerReset}>
-                    Reset
-                  </button>
-                </div>
-
-                <div className="provider-availability-grid">
-                  {managedProviders.map((provider) => {
-                    const itemStatus = providerSnapshot.providers[provider];
-                    return (
-                      <article className="provider-availability-card" key={provider}>
-                        <strong>{managedProviderLabel(provider)}</strong>
-                        <span>{providerStateLabel(itemStatus.state)}</span>
-                        <span>{providerAvailabilityLabel(itemStatus.availability)}</span>
-                      </article>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="status-line">
-                <p className="status-label">Ultima analise</p>
-                <p className="status-label">
-                  {lastAnalyzedAt ? formatClock(lastAnalyzedAt) : "Aguardando analise"}
-                </p>
-              </div>
-
-              <div className="action-row">
-                <button
-                  className="analyze-button"
-                  type="button"
-                  onClick={handleCheckHealth}
-                  disabled={isCheckingHealth}
-                >
-                  {isCheckingHealth ? "Consultando..." : "Atualizar health"}
-                </button>
-                <StatusBadge status={headerStatus} />
-              </div>
-
-              {health ? <JsonViewer data={health} /> : <p className="empty-state">Sem status consultado.</p>}
-              {healthError ? <p className="error-text">{healthError}</p> : null}
-            </Panel>
-          </div>
-        </section>
-
-        <section className="lower-tabs-panel">
-          <div className="lower-tabs-header" role="tablist" aria-label="Painel inferior">
-            {[
-              { id: "estatisticas", label: "Estatisticas" },
-              { id: "padroes", label: "Padroes" },
-              { id: "performance", label: "Performance" },
-              { id: "replay", label: "Replay" },
-              { id: "simulacao", label: "Simulacao" },
-              { id: "logs", label: "Logs" },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={activeBottomTab === tab.id}
-                className={`lower-tab-button ${activeBottomTab === tab.id ? "lower-tab-button-active" : ""}`}
-                onClick={() =>
-                  setActiveBottomTab(
-                    tab.id as
-                      | "estatisticas"
-                      | "padroes"
-                      | "performance"
-                      | "replay"
-                      | "simulacao"
-                      | "logs"
-                  )
-                }
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="lower-tab-content" role="tabpanel">
-            {activeBottomTab === "replay" ? (
-              <ReplayTimeline events={replayHistory} />
-            ) : (
-              <article className="placeholder-card">
-                <h4>{activeBottomTab.toUpperCase()}</h4>
-                <p>
-                  Painel visual premium em evolucao. Esta aba mantem layout comercial enquanto o stream continua
-                  alimentando o dashboard em tempo real.
-                </p>
-                <div className="placeholder-metrics">
-                  <span>Eventos: {liveEvents.length}</span>
-                  <span>Accuracy: {headerAccuracy}</span>
-                  <span>Confidence: {headerConfidence}</span>
-                  <span>Learning: {learning.learning_score}</span>
-                  <span>Status: {liveConnected ? "online" : "offline"}</span>
-                  <span>Decisao: {tradingDecision}</span>
-                </div>
-              </article>
-            )}
-          </div>
-        </section>
+        {mainContent}
       </section>
     </main>
   );
